@@ -21,7 +21,10 @@ from aiogram import Bot, Dispatcher  # noqa: E402
 from aiogram.client.default import DefaultBotProperties  # noqa: E402
 from aiogram.client.session.base import BaseSession  # noqa: E402
 from aiogram.methods import (  # noqa: E402
+    AnswerCallbackQuery,
     BanChatMember,
+    DeleteMessages,
+    EditMessageText,
     ForwardMessage,
     GetChat,
     GetChatMember,
@@ -88,13 +91,13 @@ class FakeSession(BaseSession):
         super().__init__()
         self.calls = []
         self.status = {GROUP_ADMIN["id"]: "administrator"}
+        self.users = {u["id"]: u for u in (ADMIN, VICTIM, RANDOM, GROUP_ADMIN, NOUSER)}
 
     def of(self, kind):
         return [c for c in self.calls if isinstance(c, kind)]
 
     def member(self, user_id):
-        known = {u["id"]: u for u in (ADMIN, VICTIM, RANDOM, GROUP_ADMIN, NOUSER)}
-        user = known.get(user_id, {"id": user_id, "is_bot": user_id == 9006812840, "first_name": f"U{user_id}"})
+        user = self.users.get(user_id, {"id": user_id, "is_bot": user_id == 9006812840, "first_name": f"U{user_id}"})
         status = self.status.get(user_id, "member")
         data = {"status": status, "user": user}
         if status == "administrator":
@@ -119,6 +122,11 @@ class FakeSession(BaseSession):
         if isinstance(method, (SendMessage, SendPhoto)):
             check_html(method.text if isinstance(method, SendMessage) else (method.caption or ""))
             return Message(message_id=99, date=now, chat={"id": method.chat_id, "type": "supergroup"}, text="ok")
+        if isinstance(method, EditMessageText):
+            check_html(method.text)
+            return Message(message_id=method.message_id, date=now, chat={"id": method.chat_id, "type": "supergroup"}, text="ok")
+        if isinstance(method, (DeleteMessages, AnswerCallbackQuery)):
+            return True
         if isinstance(method, ForwardMessage):
             return Message(message_id=98, date=now, chat={"id": method.chat_id, "type": "private"}, text="fwd")
         if isinstance(method, BanChatMember):
@@ -171,7 +179,7 @@ async def main():
     dp.message.outer_middleware(TrackerMiddleware(db, cfg))
     dp.include_routers(moderation.router, info.router, welcome.router, events.router)
     used = dp.resolve_used_update_types()
-    assert {"message", "chat_member", "my_chat_member"} <= set(used), used
+    assert {"message", "chat_member", "my_chat_member", "callback_query"} <= set(used), used
 
     counter = iter(range(1, 10_000))
 
@@ -191,6 +199,23 @@ async def main():
     def replies():
         return [c.text for c in session.of(SendMessage)]
 
+    def undo_button():
+        markups = [c.reply_markup for c in session.of(SendMessage) if c.reply_markup]
+        assert len(markups) == 1, "il faut exactement un bouton Annuler"
+        button = markups[0].inline_keyboard[0][0]
+        assert "Annuler" in button.text
+        return button.callback_data
+
+    async def click(user, data):
+        n = next(counter)
+        session.calls.clear()
+        await dp.feed_update(bot, Update(update_id=n, callback_query={
+            "id": str(n), "from": user, "chat_instance": "ci", "data": data,
+            "message": {"message_id": 500, "date": int(time.time()), "text": "🔨 Ban",
+                        "chat": {"id": CHAT, "type": "supergroup", "title": "feurchat"},
+                        "from": {"id": 9006812840, "is_bot": True, "first_name": "FeurBot"}},
+        }))
+
     # Une victime écrit : elle est mémorisée
     victim_msg = await send(VICTIM, "salut tout le monde")
     assert (await db.find_by_username("@VICTIM"))["user_id"] == VICTIM["id"]
@@ -206,35 +231,49 @@ async def main():
     texts = replies()
     assert any("Ban" in t and "pub en masse" in t and "1h" in t for t in texts), texts
     assert any(t.startswith("#BAN #id111111") for t in texts), "pas de log envoyé à l'admin"
+    assert undo_button().startswith("undo:") and not session.of(DeleteMessages), "le ban ne doit rien supprimer"
 
-    # Unban
-    await send(ADMIN, ".unban 111111")
+    # Déban (alias .deban)
+    await send(ADMIN, ".deban 111111")
     assert session.of(UnbanChatMember) and session.status[VICTIM["id"]] == "left"
 
-    # Mute en réponse à un message, avec transfert de la preuve dans les logs
-    await send(ADMIN, ".mute 30m flood", reply_to=victim_msg)
+    # Mute en réponse à un message : preuve transférée dans les logs, PUIS commande + message visé supprimés
+    cmd = await send(ADMIN, ".mute 30m flood", reply_to=victim_msg)
     restrict = session.of(RestrictChatMember)[0]
     assert restrict.user_id == VICTIM["id"] and not restrict.permissions.can_send_messages
     assert session.of(ForwardMessage), "le message visé n'a pas été transféré dans les logs"
-    assert any("30min" in t and "flood" in t for t in replies())
+    deleted = session.of(DeleteMessages)
+    assert deleted and deleted[0].message_ids == [cmd["message_id"], victim_msg["message_id"]], deleted
+    assert session.calls.index(session.of(ForwardMessage)[0]) < session.calls.index(deleted[0]), "preuve après suppression"
+    confirm = [c for c in session.of(SendMessage) if c.chat_id == CHAT][-1]
+    assert "30min" in confirm.text and "flood" in confirm.text and confirm.reply_parameters is None
+    assert undo_button().startswith("undo:")
+
+    # Mute en réponse au message de quelqu'un d'autre que la cible : on ne supprime que la commande
+    other_msg = await send(RANDOM, "message innocent")
+    cmd = await send(ADMIN, ".mute @victim 1h", reply_to=other_msg)
+    assert session.of(DeleteMessages)[0].message_ids == [cmd["message_id"]]
 
     # Durée invalide
     await send(ADMIN, ".mute @victim 10s")
     assert not session.of(RestrictChatMember) and any("30s et 366j" in t for t in replies())
 
-    # Unmute : droits par défaut du groupe
-    await send(ADMIN, ".unmute @victim")
+    # Démute (alias .demute) : droits par défaut du groupe
+    await send(ADMIN, ".demute @victim")
     assert session.of(RestrictChatMember)[0].permissions.can_send_messages
 
     # Unmute alors qu'il n'est plus mute
     await send(ADMIN, ".unmute @victim")
     assert not session.of(RestrictChatMember) and any("pas mute" in t for t in replies())
 
-    # Mute définitif (sans durée) puis kick
-    await send(ADMIN, ".MUTE @victim")
+    # Mute définitif (sans durée ni raison) : seule la commande est supprimée
+    cmd = await send(ADMIN, ".MUTE @victim")
     assert session.of(RestrictChatMember)[0].until_date is None
+    assert session.of(DeleteMessages)[0].message_ids == [cmd["message_id"]]
+    assert any("définitif" in t and "Raison : aucune" in t for t in replies())
     await send(ADMIN, "!kick @victim relou")
     assert session.of(BanChatMember) and session.of(UnbanChatMember)
+    assert not any(c.reply_markup for c in session.of(SendMessage)), "pas de bouton Annuler sur un kick"
 
     # On ne touche pas aux admins
     await send(ADMIN, ".ban 444444")
@@ -259,7 +298,7 @@ async def main():
     await send(VICTIM, "je suis sage")
     await send(ADMIN, ".info @victim")
     fiche = "\n".join(replies())
-    assert "Bans : 1" in fiche and "Mutes : 2" in fiche and "Kicks : 1" in fiche, fiche
+    assert "Bans : 1" in fiche and "Mutes : 3" in fiche and "Kicks : 1" in fiche, fiche
     assert "Messages : 2" in fiche and "pub en masse" in fiche, fiche
 
     # .info par ID d'un inconnu, puis sur soi-même
@@ -267,6 +306,24 @@ async def main():
     assert "<code>222222</code>" in "\n".join(replies())
     await send(ADMIN, ".info")
     assert "<code>8925708293</code>" in "\n".join(replies())
+
+    # Bouton Annuler sur un ban définitif sans raison
+    await send(ADMIN, ".ban @victim")
+    assert any("définitif" in t and "Raison : aucune" in t for t in replies())
+    data = undo_button()
+    await click(RANDOM, data)
+    assert session.of(AnswerCallbackQuery)[0].show_alert and not session.of(UnbanChatMember), "un non-admin a annulé"
+    await click(ADMIN, data)
+    assert session.of(UnbanChatMember) and session.status[VICTIM["id"]] == "left"
+    edit = session.of(EditMessageText)[0]
+    assert "Annulé" in edit.text and edit.reply_markup is None
+    assert "annulation du ban" in (await db.last_action(VICTIM["id"], "unban"))["reason"]
+    assert any(t.startswith("#UNBAN") for t in replies()), "pas de log de l'annulation"
+
+    # Bouton Annuler sur un mute
+    await send(ADMIN, ".mute @victim 1h")
+    await click(ADMIN, undo_button())
+    assert session.of(RestrictChatMember)[0].permissions.can_send_messages
 
     # .logs
     await send(ADMIN, ".logs")
@@ -350,11 +407,15 @@ async def main():
     }))
     assert any("Je suis admin" in t for t in replies())
 
-    # Changement de pseudo : l'ancien reste retrouvable
-    await send({**VICTIM, "username": "victim2", "first_name": "Nouveau nom"}, "j'ai changé")
+    # Changement de pseudo : l'ancien reste retrouvable et apparaît dans .info
+    renamed = {**VICTIM, "username": "victim2", "first_name": "Nouveau nom"}
+    session.users[VICTIM["id"]] = renamed
+    await send(renamed, "j'ai changé")
     assert (await db.find_by_username("victim"))["user_id"] == VICTIM["id"]
     await send(ADMIN, ".info @victim2")
-    assert "Noms connus" in "\n".join(replies())
+    fiche = "\n".join(replies())
+    assert "Historique des pseudos" in fiche and "@victim2 — actuel" in fiche and "@victim — du" in fiche, fiche
+    assert "Historique des noms" in fiche and "Nouveau nom — actuel" in fiche and "Victime — du" in fiche, fiche
 
     print("✅ Tous les tests passent")
 

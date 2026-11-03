@@ -12,16 +12,22 @@ La cible se donne en **répondant à un message**, ou avec `@pseudo` / ID.
 | Commande | Effet |
 | --- | --- |
 | `.ban [durée] [raison]` | Bannir (sans durée = définitif) |
-| `.unban` | Débannir |
+| `.deban` (ou `.unban`) | Débannir |
 | `.mute [durée] [raison]` | Rendre muet (sans durée = définitif) |
-| `.unmute` | Rendre la parole (droits par défaut du groupe) |
+| `.demute` (ou `.unmute`) | Rendre la parole (droits par défaut du groupe) |
 | `.kick [raison]` | Expulser (peut revenir avec un lien) |
-| `.info [@pseudo\|ID]` | Fiche : statut, activité, sanctions, historique, anciens noms |
+| `.info [@pseudo\|ID]` | Fiche : statut, activité, sanctions, historique des sanctions, des pseudos et des noms |
 | `.logs [nombre]` | Dernières sanctions |
 | `.welcome …` | Message de bienvenue (voir plus bas) |
 | `.help` | Aide |
 
+Raison et durée sont facultatives : sans durée, le ban / mute est définitif.
 Durées : `30s`, `10m`, `1h`, `1d` (ou `1j`), `1w`, combinables (`1h30m`). Entre 30 s et 366 j.
+
+- Au `.mute` dans le groupe, la commande est supprimée, ainsi que le message auquel tu réponds
+  (seulement s'il est de la personne mute). Il est d'abord transféré dans les logs comme preuve.
+- Sous chaque ban / mute, un bouton **↩️ Annuler** (réservé aux admins) débannit / démute
+  et note l'annulation dans les logs.
 
 Exemples : `.mute @pseudo 1h spam`, `.ban 123456789 pub`, ou en réponse : `.ban insultes`.
 
@@ -51,12 +57,13 @@ Variables : `{mention}` `{name}` `{username}` `{id}` `{chat}` `{count}` (nombre 
   le lien vers la commande et le message visé transféré comme preuve.
 - Les sanctions faites **à la main** par d'autres admins (sans le bot) sont aussi journalisées.
 - Arrivées (avec le lien d'invitation utilisé) et départs sont enregistrés en base.
-- Les changements de nom / pseudo sont gardés.
+- Les changements de pseudo et de nom sont gardés et affichés dans `.info`. Telegram ne donne pas l'historique
+  aux bots : il commence au moment où le bot voit la personne pour la première fois.
 
 ## Mise en place côté Telegram
 
-1. Ajouter le bot au groupe et le passer **admin** avec le droit **« Bannir des utilisateurs »**
-   (sans ça il ne voit pas les messages `.commande` et ne peut sanctionner personne).
+1. Ajouter le bot au groupe et le passer **admin** avec les droits **« Bannir des utilisateurs »**
+   et **« Supprimer des messages »** (sans admin il ne voit pas les messages `.commande`).
 2. L'admin envoie `/start` au bot en privé pour recevoir les logs.
 
 ## Variables d'environnement

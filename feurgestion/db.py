@@ -145,12 +145,13 @@ class Database:
         ) as cur:
             return await cur.fetchone()
 
-    async def name_history(self, user_id: int, limit: int = 5) -> list[aiosqlite.Row]:
+    async def name_history(self, user_id: int, limit: int = 50) -> list[aiosqlite.Row]:
+        """Les `limit` derniers changements de nom / pseudo, du plus ancien au plus récent."""
         async with self.conn.execute(
-            "SELECT * FROM name_history WHERE user_id = ? ORDER BY seen_at DESC LIMIT ?",
+            "SELECT * FROM name_history WHERE user_id = ? ORDER BY seen_at DESC, id DESC LIMIT ?",
             (user_id, limit),
         ) as cur:
-            return list(await cur.fetchall())
+            return list(reversed(await cur.fetchall()))
 
     # --- Journal ---
 
@@ -172,6 +173,10 @@ class Database:
         )
         await self.conn.commit()
         return cur.lastrowid
+
+    async def get_action(self, action_id: int) -> aiosqlite.Row | None:
+        async with self.conn.execute("SELECT * FROM actions WHERE id = ?", (action_id,)) as cur:
+            return await cur.fetchone()
 
     async def user_actions(self, user_id: int, limit: int = 10) -> list[aiosqlite.Row]:
         async with self.conn.execute(

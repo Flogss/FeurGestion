@@ -16,9 +16,9 @@ PREFIXES = ".!/"
 
 ACTION_LABELS = {
     "ban": "🔨 Ban",
-    "unban": "♻️ Unban",
+    "unban": "♻️ Déban",
     "mute": "🔇 Mute",
-    "unmute": "🔊 Unmute",
+    "unmute": "🔊 Démute",
     "kick": "👢 Kick",
     "join": "📥 Arrivée",
     "leave": "📤 Départ",

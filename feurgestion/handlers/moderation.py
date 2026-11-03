@@ -2,11 +2,17 @@ import logging
 import time
 from html import escape
 
-from aiogram import Bot, Router
+from aiogram import Bot, F, Router
 from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
-from aiogram.types import ChatPermissions, Message
+from aiogram.types import (
+    CallbackQuery,
+    ChatPermissions,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from ..config import Config
 from ..db import Database
@@ -35,13 +41,21 @@ ALL_ALLOWED = ChatPermissions(**{field: True for field in ChatPermissions.model_
 
 USAGE = {
     "ban": ".ban @pseudo|ID [durée] [raison]",
-    "unban": ".unban @pseudo|ID",
+    "unban": ".deban @pseudo|ID",
     "mute": ".mute @pseudo|ID [durée] [raison]",
-    "unmute": ".unmute @pseudo|ID",
+    "unmute": ".demute @pseudo|ID",
     "kick": ".kick @pseudo|ID [raison]",
 }
+ALIASES = {"deban": "unban", "demute": "unmute"}
 TIMED = ("ban", "mute")
 PUNISHMENTS = ("ban", "mute", "kick")
+UNDO = {"ban": "unban", "mute": "unmute"}
+
+
+def undo_keyboard(action_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="↩️ Annuler", callback_data=f"undo:{action_id}")]]
+    )
 
 
 async def _check_target(action: str, target: Target, admin_id: int, bot: Bot, cfg: Config) -> str | None:
@@ -90,9 +104,9 @@ async def _apply(action: str, user_id: int, until: int | None, bot: Bot, cfg: Co
         )
 
 
-@router.message(Command(*USAGE, prefix=PREFIXES, ignore_case=True))
+@router.message(Command(*USAGE, *ALIASES, prefix=PREFIXES, ignore_case=True))
 async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: Database, cfg: Config) -> None:
-    action = command.command.lower()
+    action = ALIASES.get(command.command.lower(), command.command.lower())
     target, rest, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error:
         await message.reply(error)
@@ -125,7 +139,7 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
         await message.reply(f"❌ Telegram a refusé : {escape(exc.message)}")
         return
 
-    await db.add_action(action, target.id, admin.id, reason, duration, until)
+    action_id = await db.add_action(action, target.id, admin.id, reason, duration, until)
     log.info("%s %s par %s (durée=%s, raison=%s)", action, target.id, admin.id, duration, reason)
 
     details = [f"👤 {target.label}"]
@@ -134,18 +148,77 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
         details.append(f"⏱ Durée : {format_duration(duration)}{end}")
     if action in PUNISHMENTS:
         details.append(f"📝 Raison : {escape(reason) if reason else 'aucune'}")
-    await message.reply(f"<b>{ACTION_LABELS[action]}</b>\n" + "\n".join(details))
 
     in_group = message.chat.type != ChatType.PRIVATE
     reply = message.reply_to_message if in_group else None
+    # Au mute, on efface la commande et le message visé (seulement s'il est bien de la personne mute)
+    clean_up = action == "mute" and in_group
+    to_delete = [message.message_id] if clean_up else []
+    if clean_up and reply and reply.from_user and reply.from_user.id == target.id:
+        to_delete.append(reply.message_id)
+
+    # Le log part avant la suppression : le message visé y est transféré comme preuve
     log_lines = [
         f"#{action.upper()} #id{target.id}",
         *details,
         f"👮 Par : {Target.from_user(admin).label}",
         f"🕒 {format_date(time.time(), cfg)}",
     ]
-    if in_group:
+    if in_group and not clean_up:
         log_lines.append(f"🔗 {message_link(cfg.chat_id, message.message_id)}")
     if reply:
         log_lines.append("⬇️ Message visé :")
     await send_log(bot, cfg, "\n".join(log_lines), evidence=(cfg.chat_id, reply.message_id) if reply else None)
+
+    text = f"<b>{ACTION_LABELS[action]}</b>\n" + "\n".join(details)
+    markup = undo_keyboard(action_id) if action in UNDO else None
+    if to_delete:
+        try:
+            await bot.delete_messages(cfg.chat_id, to_delete)
+        except TelegramAPIError as exc:
+            log.warning("Suppression des messages %s impossible : %s", to_delete, exc)
+        await bot.send_message(cfg.chat_id, text, reply_markup=markup)
+    else:
+        await message.reply(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("undo:"))
+async def on_undo(callback: CallbackQuery, bot: Bot, db: Database, cfg: Config) -> None:
+    admin = callback.from_user
+    if admin.id not in cfg.admin_ids:
+        await callback.answer("⛔️ Réservé aux admins.", show_alert=True)
+        return
+
+    row = await db.get_action(int(callback.data.removeprefix("undo:")))
+    if row is None or row["action"] not in UNDO:
+        await callback.answer("❌ Sanction introuvable.", show_alert=True)
+        return
+
+    undo = UNDO[row["action"]]
+    try:
+        await _apply(undo, row["user_id"], None, bot, cfg)
+    except TelegramAPIError as exc:
+        await callback.answer(f"❌ Telegram a refusé : {exc.message}", show_alert=True)
+        return
+
+    await db.add_action(undo, row["user_id"], admin.id, f"annulation du {row['action']} #{row['id']}")
+    log.info("%s #%s annulé par %s", row["action"], row["id"], admin.id)
+    await callback.answer("✅ Annulé")
+
+    note = "↩️ <b>Annulé</b> par " + Target.from_user(admin).mention
+    if row["action"] == "ban":
+        note += " — il peut revenir avec un lien"
+    if isinstance(callback.message, Message):
+        await callback.message.edit_text(f"{callback.message.html_text}\n\n{note}", reply_markup=None)
+
+    user = await db.get_user(row["user_id"])
+    target = Target.from_row(user) if user else Target(row["user_id"])
+    await send_log(
+        bot,
+        cfg,
+        f"#{undo.upper()} #id{target.id}\n"
+        f"<b>{ACTION_LABELS[undo]}</b> (annulation du {row['action']} du {format_date(row['created_at'], cfg)})\n"
+        f"👤 {target.label}\n"
+        f"👮 Par : {Target.from_user(admin).label}\n"
+        f"🕒 {format_date(time.time(), cfg)}",
+    )

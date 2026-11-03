@@ -22,16 +22,18 @@ from ..utils import (
 
 router = Router(name="info")
 
-ALL_COMMANDS = ("ban", "unban", "mute", "unmute", "kick", "info", "logs", "help", "aide", "welcome")
+ALL_COMMANDS = ("ban", "unban", "deban", "mute", "unmute", "demute", "kick", "info", "logs", "help", "aide", "welcome")
 
 HELP = """<b>🤖 FeurGestion — commandes</b>
 
 <b>Modération</b> — en réponse à un message, ou avec <code>@pseudo</code> / ID
 <code>.ban [durée] [raison]</code> — bannir (sans durée = définitif)
-<code>.unban</code> — débannir
+<code>.deban</code> — débannir (ou <code>.unban</code>)
 <code>.mute [durée] [raison]</code> — rendre muet (sans durée = définitif)
-<code>.unmute</code> — rendre la parole
+<code>.demute</code> — rendre la parole (ou <code>.unmute</code>)
 <code>.kick [raison]</code> — expulser (peut revenir avec un lien)
+Raison et durée sont facultatives. Au <code>.mute</code>, ta commande et le message visé sont supprimés.
+Bouton « ↩️ Annuler » sous chaque ban / mute.
 Durées : <code>30s</code> <code>10m</code> <code>1h</code> <code>1d</code>/<code>1j</code> <code>1w</code>, combinables : <code>1h30m</code>
 Ex : <code>.mute @pseudo 1h spam</code> · <code>.ban 123456789 pub</code>
 
@@ -92,6 +94,30 @@ def _entry(row, cfg: Config, admins: dict[int, str]) -> list[str]:
     return parts
 
 
+def _periods(names, key: str) -> list[list]:
+    """Regroupe l'historique en périodes [valeur, début, fin] (fin = None : valeur actuelle)."""
+    periods = []
+    for row in names:
+        if periods and periods[-1][0] == row[key]:
+            continue
+        if periods:
+            periods[-1][2] = row["seen_at"]
+        periods.append([row[key], row["seen_at"], None])
+    return periods
+
+
+def _period_lines(periods, render, cfg: Config) -> list[str]:
+    lines = []
+    for value, start, end in reversed(periods):
+        when = (
+            f"actuel, vu depuis le {format_date(start, cfg)}"
+            if end is None
+            else f"du {format_date(start, cfg)} au {format_date(end, cfg)}"
+        )
+        lines.append(f"• {render(value)} — {when}")
+    return lines
+
+
 @router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
 async def cmd_start(message: Message, cfg: Config) -> None:
     if message.from_user.id in cfg.admin_ids:
@@ -128,7 +154,7 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
     row = await db.get_user(target.id)
     counts = await db.action_counts(target.id)
     history = await db.user_actions(target.id, 10)
-    names = await db.name_history(target.id, 5)
+    names = await db.name_history(target.id)
     last_join = await db.last_action(target.id, "join")
     admins = await _admin_names(db, history)
 
@@ -155,11 +181,15 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
     if history:
         lines += ["", "<b>🕓 Historique</b> <i>(10 derniers)</i>"]
         lines += ["• " + " — ".join(_entry(entry, cfg, admins)) for entry in history]
-    if len(names) > 1:
-        lines += ["", "<b>📝 Noms connus</b>"]
-        for name in names:
-            handle = f"@{escape(name['username'])}" if name["username"] else "sans pseudo"
-            lines.append(f"• {escape(name['full_name'])} ({handle}) — {format_date(name['seen_at'], cfg)}")
+    if names:
+        lines += ["", "<b>📝 Historique des pseudos</b> <i>(depuis mon arrivée)</i>"]
+        lines += _period_lines(
+            _periods(names, "username"), lambda u: f"@{escape(u)}" if u else "<i>sans pseudo</i>", cfg
+        )
+        name_periods = _periods(names, "full_name")
+        if len(name_periods) > 1:
+            lines += ["", "<b>📛 Historique des noms</b>"]
+            lines += _period_lines(name_periods, escape, cfg)
 
     for chunk in chunk_lines(lines):
         await message.reply(chunk)

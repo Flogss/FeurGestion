@@ -92,6 +92,8 @@ async def on_bot_status(event: ChatMemberUpdated, bot: Bot, cfg: Config) -> None
         text = "✅ Je suis admin du groupe."
         if not new.can_restrict_members:
             text += "\n⚠️ Il me manque le droit « Bannir des utilisateurs » : ban/mute impossibles."
+        if not new.can_delete_messages:
+            text += "\n⚠️ Il me manque le droit « Supprimer des messages » : rien ne sera effacé au mute."
     elif in_chat(new):
         text = "⚠️ Je ne suis plus admin du groupe : ban/mute impossibles et je ne vois plus les commandes."
     else:
@@ -109,7 +111,11 @@ async def check_bot_rights(bot: Bot, cfg: Config) -> None:
         await send_log(bot, cfg, f"❌ Je n'arrive pas à accéder au groupe <code>{cfg.chat_id}</code> : {escape(exc.message)}")
         return
     if member.status == ChatMemberStatus.ADMINISTRATOR and member.can_restrict_members:
-        log.info("Droits OK dans le groupe %s", cfg.chat_id)
+        if member.can_delete_messages:
+            log.info("Droits OK dans le groupe %s", cfg.chat_id)
+        else:
+            log.warning("Le bot n'a pas le droit de supprimer des messages")
+            await send_log(bot, cfg, "⚠️ Il me manque le droit « Supprimer des messages » : rien ne sera effacé au mute.")
         return
     log.warning("Le bot n'est pas admin avec le droit de bannir (statut : %s)", member.status)
     await send_log(
