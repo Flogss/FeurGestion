@@ -87,7 +87,7 @@ Tests (sans réseau, API Telegram simulée) :
 
 ## Déploiement Railway
 
-Service `FeurGestion` dans le projet `daring-spirit`, construit avec le `Dockerfile`, 1 seule instance,
+Service `FeurGestion` dans le projet `daring-spirit`, construit avec le `Dockerfile` (détecté tout seul), 1 seule instance,
 volume monté sur `/data` pour la base. Déployer :
 
 ```bash
