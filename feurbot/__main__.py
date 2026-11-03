@@ -1,16 +1,16 @@
 import asyncio
 import logging
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+from .app import build_dispatcher
 from .config import Config, load_config
 from .db import Database
-from .handlers import events, info, moderation, welcome
-from .middlewares import TrackerMiddleware
+from .handlers import events
 
-log = logging.getLogger("feurgestion")
+log = logging.getLogger("feurbot")
 
 
 async def on_startup(bot: Bot, cfg: Config) -> None:
@@ -28,9 +28,7 @@ async def main() -> None:
     await db.connect()
 
     bot = Bot(cfg.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
-    dp = Dispatcher(cfg=cfg, db=db)
-    dp.message.outer_middleware(TrackerMiddleware(db, cfg))
-    dp.include_routers(moderation.router, info.router, welcome.router, events.router)
+    dp = build_dispatcher(cfg, db)
     dp.startup.register(on_startup)
 
     try:

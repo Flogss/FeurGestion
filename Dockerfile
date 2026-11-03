@@ -8,6 +8,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
-COPY feurgestion ./feurgestion
+COPY feurbot ./feurbot
 
-CMD ["python", "-m", "feurgestion"]
+CMD ["python", "-m", "feurbot"]

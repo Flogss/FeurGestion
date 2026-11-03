@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import re
+import time
 from datetime import datetime
 from html import escape
 
@@ -20,9 +22,53 @@ ACTION_LABELS = {
     "mute": "🔇 Mute",
     "unmute": "🔊 Démute",
     "kick": "👢 Kick",
+    "warn": "⚠️ Warn",
+    "unwarn": "🧽 Warn retiré",
     "join": "📥 Arrivée",
     "leave": "📤 Départ",
 }
+
+_cooldowns: dict[str, float] = {}
+_admin_cache: dict[str, object] = {"ids": frozenset(), "at": 0.0}
+
+
+def on_cooldown(key: str, seconds: float) -> bool:
+    """True si `key` a déjà servi il y a moins de `seconds` secondes (sinon on démarre le chrono)."""
+    now = time.monotonic()
+    if now - _cooldowns.get(key, -seconds) < seconds:
+        return True
+    _cooldowns[key] = now
+    return False
+
+
+async def group_admin_ids(bot: Bot, cfg: Config) -> frozenset[int]:
+    """Admins du groupe + admins du bot (liste Telegram gardée 10 minutes en mémoire)."""
+    if time.monotonic() - _admin_cache["at"] > 600:
+        try:
+            admins = await bot.get_chat_administrators(cfg.chat_id)
+            _admin_cache["ids"] = frozenset(member.user.id for member in admins)
+            _admin_cache["at"] = time.monotonic()
+        except TelegramAPIError as exc:
+            log.warning("Liste des admins indisponible : %s", exc)
+    return _admin_cache["ids"] | cfg.admin_ids
+
+
+_background: set[asyncio.Task] = set()
+
+
+async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay: float) -> None:
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except TelegramAPIError:
+        pass
+
+
+def delete_later(bot: Bot, chat_id: int, message_id: int, delay: float) -> None:
+    """Supprime un message après `delay` secondes, sans bloquer."""
+    task = asyncio.create_task(_delete_later(bot, chat_id, message_id, delay))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
 
 
 def in_chat(member) -> bool:

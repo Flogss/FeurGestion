@@ -46,6 +46,33 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS warns (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    admin_id   INTEGER,
+    reason     TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_warns_user ON warns(user_id);
+
+-- Notes (#nom) et filtres (réponses automatiques), même format
+CREATE TABLE IF NOT EXISTS snippets (
+    kind       TEXT NOT NULL,
+    name       TEXT NOT NULL COLLATE NOCASE,
+    text       TEXT,
+    media_type TEXT,
+    file_id    TEXT,
+    created_by INTEGER,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, name)
+);
+
+CREATE TABLE IF NOT EXISTS afk (
+    user_id INTEGER PRIMARY KEY,
+    reason  TEXT,
+    since   INTEGER NOT NULL
+);
 """
 
 SANCTIONS = ("ban", "unban", "mute", "unmute", "kick")
@@ -76,17 +103,22 @@ class Database:
 
     # --- Utilisateurs ---
 
-    async def track_user(self, user: User, active: bool) -> None:
-        """Enregistre un utilisateur vu. `active` = il vient d'envoyer un message."""
+    async def track_user(self, user: User, active: bool) -> tuple[str | None, str] | None:
+        """Enregistre un utilisateur vu. `active` = il vient d'envoyer un message.
+
+        Retourne (ancien pseudo, ancien nom) si une personne déjà connue a changé de pseudo ou de nom.
+        """
         now = int(time.time())
         username = user.username
         name = full_name(user.first_name, user.last_name)
 
         existing = await self.get_user(user.id)
-        if existing is None or (
-            existing["username"] != username
-            or full_name(existing["first_name"], existing["last_name"]) != name
-        ):
+        change = None
+        if existing is not None:
+            old_name = full_name(existing["first_name"], existing["last_name"])
+            if existing["username"] != username or old_name != name:
+                change = (existing["username"], old_name)
+        if existing is None or change:
             await self.conn.execute(
                 "INSERT INTO name_history(user_id, username, full_name, seen_at) VALUES (?, ?, ?, ?)",
                 (user.id, username, name, now),
@@ -122,6 +154,7 @@ class Database:
             ),
         )
         await self.conn.commit()
+        return change
 
     async def get_user(self, user_id: int) -> aiosqlite.Row | None:
         async with self.conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
@@ -225,3 +258,85 @@ class Database:
             (key, json.dumps(value, ensure_ascii=False)),
         )
         await self.conn.commit()
+
+    # --- Warns ---
+
+    async def add_warn(self, user_id: int, admin_id: int | None, reason: str | None) -> int:
+        cur = await self.conn.execute(
+            "INSERT INTO warns(user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, admin_id, reason, int(time.time())),
+        )
+        await self.conn.commit()
+        return cur.lastrowid
+
+    async def get_warn(self, warn_id: int) -> aiosqlite.Row | None:
+        async with self.conn.execute("SELECT * FROM warns WHERE id = ?", (warn_id,)) as cur:
+            return await cur.fetchone()
+
+    async def user_warns(self, user_id: int) -> list[aiosqlite.Row]:
+        async with self.conn.execute(
+            "SELECT * FROM warns WHERE user_id = ? ORDER BY created_at, id", (user_id,)
+        ) as cur:
+            return list(await cur.fetchall())
+
+    async def remove_warn(self, warn_id: int) -> bool:
+        cur = await self.conn.execute("DELETE FROM warns WHERE id = ?", (warn_id,))
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def clear_warns(self, user_id: int) -> int:
+        cur = await self.conn.execute("DELETE FROM warns WHERE user_id = ?", (user_id,))
+        await self.conn.commit()
+        return cur.rowcount
+
+    # --- Notes et filtres ---
+
+    async def save_snippet(
+        self, kind: str, name: str, text: str | None, media_type: str | None, file_id: str | None, author: int
+    ) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO snippets(kind, name, text, media_type, file_id, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(kind, name) DO UPDATE SET
+                text = excluded.text, media_type = excluded.media_type, file_id = excluded.file_id,
+                created_by = excluded.created_by, created_at = excluded.created_at
+            """,
+            (kind, name.lower(), text, media_type, file_id, author, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_snippet(self, kind: str, name: str) -> aiosqlite.Row | None:
+        async with self.conn.execute(
+            "SELECT * FROM snippets WHERE kind = ? AND name = ?", (kind, name.lower())
+        ) as cur:
+            return await cur.fetchone()
+
+    async def list_snippets(self, kind: str) -> list[aiosqlite.Row]:
+        async with self.conn.execute("SELECT * FROM snippets WHERE kind = ? ORDER BY name", (kind,)) as cur:
+            return list(await cur.fetchall())
+
+    async def delete_snippet(self, kind: str, name: str) -> bool:
+        cur = await self.conn.execute("DELETE FROM snippets WHERE kind = ? AND name = ?", (kind, name.lower()))
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    # --- AFK ---
+
+    async def set_afk(self, user_id: int, reason: str | None) -> None:
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO afk(user_id, reason, since) VALUES (?, ?, ?)",
+            (user_id, reason, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_afk(self, user_id: int) -> aiosqlite.Row | None:
+        async with self.conn.execute("SELECT * FROM afk WHERE user_id = ?", (user_id,)) as cur:
+            return await cur.fetchone()
+
+    async def clear_afk(self, user_id: int) -> aiosqlite.Row | None:
+        row = await self.get_afk(user_id)
+        if row:
+            await self.conn.execute("DELETE FROM afk WHERE user_id = ?", (user_id,))
+            await self.conn.commit()
+        return row

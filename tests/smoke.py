@@ -17,23 +17,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.update(BOT_TOKEN="9006812840:TEST", CHAT_ID="3940270802", ADMIN_IDS="8925708293")
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
 
-from aiogram import Bot, Dispatcher  # noqa: E402
+from aiogram import Bot  # noqa: E402
 from aiogram.client.default import DefaultBotProperties  # noqa: E402
 from aiogram.client.session.base import BaseSession  # noqa: E402
 from aiogram.methods import (  # noqa: E402
     AnswerCallbackQuery,
     BanChatMember,
+    DeleteMessage,
     DeleteMessages,
     EditMessageText,
     ForwardMessage,
     GetChat,
+    GetChatAdministrators,
     GetChatMember,
     GetChatMemberCount,
     GetMe,
+    PinChatMessage,
     RestrictChatMember,
+    SendDice,
     SendMessage,
     SendPhoto,
+    SetChatPermissions,
     UnbanChatMember,
+    UnpinChatMessage,
 )
 from aiogram.types import (  # noqa: E402
     ChatFullInfo,
@@ -47,11 +53,14 @@ from aiogram.types import (  # noqa: E402
     User,
 )
 
-from feurgestion.config import load_config  # noqa: E402
-from feurgestion.db import Database  # noqa: E402
-from feurgestion.handlers import events, info, moderation, welcome  # noqa: E402
-from feurgestion.middlewares import TrackerMiddleware  # noqa: E402
-from feurgestion.utils import format_duration, parse_duration  # noqa: E402
+from feurbot import utils  # noqa: E402
+from feurbot.app import build_dispatcher  # noqa: E402
+from feurbot.config import load_config  # noqa: E402
+from feurbot.db import Database  # noqa: E402
+from feurbot.handlers import help as help_module  # noqa: E402
+from feurbot.handlers import welcome  # noqa: E402
+from feurbot.jokes import EIGHTBALL, JOKES, QUIPS, feur_reply  # noqa: E402
+from feurbot.utils import format_duration, parse_duration  # noqa: E402
 
 CHAT = -1003940270802
 ADMIN = {"id": 8925708293, "is_bot": False, "first_name": "Flo", "username": "flo"}
@@ -92,13 +101,15 @@ class FakeSession(BaseSession):
         self.calls = []
         self.status = {GROUP_ADMIN["id"]: "administrator"}
         self.users = {u["id"]: u for u in (ADMIN, VICTIM, RANDOM, GROUP_ADMIN, NOUSER)}
+        self.permissions = {"can_send_messages": True, "can_send_photos": True, "can_send_videos": True,
+                            "can_send_polls": True, "can_invite_users": True}
 
     def of(self, kind):
         return [c for c in self.calls if isinstance(c, kind)]
 
-    def member(self, user_id):
+    def member(self, user_id, status=None):
         user = self.users.get(user_id, {"id": user_id, "is_bot": user_id == 9006812840, "first_name": f"U{user_id}"})
-        status = self.status.get(user_id, "member")
+        status = status or self.status.get(user_id, "member")
         data = {"status": status, "user": user}
         if status == "administrator":
             for name, field in ChatMemberAdministrator.model_fields.items():
@@ -112,6 +123,11 @@ class FakeSession(BaseSession):
         return data
 
     async def make_request(self, bot, method, timeout=None):
+        result = await self._respond(bot, method)
+        # Comme la vraie session : les objets renvoyés sont rattachés au bot
+        return result.as_(bot) if isinstance(result, Message) else result
+
+    async def _respond(self, bot, method):
         self.calls.append(method)
         now = int(time.time())
         if isinstance(method, GetMe):
@@ -119,9 +135,17 @@ class FakeSession(BaseSession):
         if isinstance(method, GetChatMember):
             data = self.member(method.user_id)
             return MEMBER_KINDS[data["status"]].model_validate(data)
-        if isinstance(method, (SendMessage, SendPhoto)):
-            check_html(method.text if isinstance(method, SendMessage) else (method.caption or ""))
+        if type(method).__name__.startswith("Send"):
+            check_html(getattr(method, "text", None) or getattr(method, "caption", None) or "")
             return Message(message_id=99, date=now, chat={"id": method.chat_id, "type": "supergroup"}, text="ok")
+        if isinstance(method, GetChatAdministrators):
+            return [MEMBER_KINDS["administrator"].model_validate(self.member(uid, "administrator"))
+                    for uid in (ADMIN["id"], GROUP_ADMIN["id"])]
+        if isinstance(method, SetChatPermissions):
+            self.permissions = method.permissions.model_dump(exclude_none=True)
+            return True
+        if isinstance(method, (DeleteMessage, PinChatMessage, UnpinChatMessage)):
+            return True
         if isinstance(method, EditMessageText):
             check_html(method.text)
             return Message(message_id=method.message_id, date=now, chat={"id": method.chat_id, "type": "supergroup"}, text="ok")
@@ -144,7 +168,7 @@ class FakeSession(BaseSession):
                 id=CHAT, type="supergroup", title="ꜰᴇᴜʀᴄʜᴀᴛ", accent_color_id=6, max_reaction_count=11,
                 accepted_gift_types={"unlimited_gifts": False, "limited_gifts": False,
                                      "unique_gifts": False, "premium_subscription": False, "gifts_from_channels": False},
-                permissions={"can_send_messages": True, "can_send_photos": True, "can_invite_users": True},
+                permissions=self.permissions,
             )
         if isinstance(method, GetChatMemberCount):
             return 42
@@ -175,9 +199,7 @@ async def main():
     session = FakeSession()
 
     bot = Bot("9006812840:TEST", session=session, default=DefaultBotProperties(parse_mode="HTML"))
-    dp = Dispatcher(cfg=cfg, db=db)
-    dp.message.outer_middleware(TrackerMiddleware(db, cfg))
-    dp.include_routers(moderation.router, info.router, welcome.router, events.router)
+    dp = build_dispatcher(cfg, db)
     used = dp.resolve_used_update_types()
     assert {"message", "chat_member", "my_chat_member", "callback_query"} <= set(used), used
 
@@ -203,7 +225,7 @@ async def main():
         markups = [c.reply_markup for c in session.of(SendMessage) if c.reply_markup]
         assert len(markups) == 1, "il faut exactement un bouton Annuler"
         button = markups[0].inline_keyboard[0][0]
-        assert "Annuler" in button.text
+        assert "Annuler" in button.text or "Retirer" in button.text
         return button.callback_data
 
     async def click(user, data):
@@ -336,7 +358,7 @@ async def main():
 
     # .help (aussi en privé)
     await send(ADMIN, ".help", chat=ADMIN["id"])
-    assert "FeurGestion" in replies()[0]
+    assert "FeurBot" in replies()[0]
     await send(ADMIN, "/start", chat=ADMIN["id"])
     assert "logs ici" in replies()[0]
 
@@ -421,6 +443,183 @@ async def main():
     fiche = "\n".join(replies())
     assert "Historique des pseudos" in fiche and "@victim2 — actuel" in fiche and "@victim — du" in fiche, fiche
     assert "Historique des noms" in fiche and "Nouveau nom — actuel" in fiche and "Victime — du" in fiche, fiche
+
+    # ================= Fonctions FeurBot =================
+    def texts():
+        return [getattr(c, "text", None) or getattr(c, "caption", None) or "" for c in session.calls
+                if type(c).__name__.startswith("Send") or isinstance(c, EditMessageText)]
+
+    # --- quoi -> feur ---
+    assert feur_reply("c'est quoi ???") is not None and feur_reply("QUOIII 😂") is not None
+    assert feur_reply("bonjour") is None and feur_reply("") is None
+    utils._cooldowns.clear()
+    await send(RANDOM, "tu fais quoi ?")
+    assert any("feur" in t.lower() for t in replies()), replies()
+    await send(RANDOM, "et toi tu dis quoi")
+    assert not replies(), "le cooldown feur ne marche pas"
+    await send(ADMIN, ".feur off")
+    utils._cooldowns.clear()
+    await send(RANDOM, "quoi")
+    assert not replies(), "feur désactivé mais répond quand même"
+    await send(ADMIN, ".feur on")
+
+    # --- Un non-admin qui joue au chef ---
+    utils._cooldowns.clear()
+    await send(RANDOM, ".warn @victim")
+    assert replies() and replies()[0] in QUIPS["not_admin"]
+    await send(RANDOM, ".lock liens")
+    assert not replies(), "pas de spam de répliques (cooldown)"
+
+    # --- Warns ---
+    session.status[VICTIM["id"]] = "member"
+    await send(ADMIN, ".warn @victim2 spam")
+    assert "Warn 1/3" in replies()[0]
+    first_warn = undo_button()
+    assert first_warn.startswith("unwarn:")
+    await send(ADMIN, ".warn @victim2 flood")
+    assert "Warn 2/3" in replies()[0]
+    await click(ADMIN, first_warn)
+    assert "Warn retiré" in session.of(EditMessageText)[0].text
+    await send(RANDOM, ".warns @victim2")
+    assert "1/3" in replies()[0] and "flood" in replies()[0]
+    await send(ADMIN, ".warnlimit 2")
+    await send(ADMIN, ".warnaction ban")
+    await send(ADMIN, ".warn @victim2 encore")
+    assert session.of(BanChatMember) and "automatique" in replies()[0], replies()
+    assert not await db.user_warns(VICTIM["id"]), "compteur pas remis à zéro"
+    session.status[VICTIM["id"]] = "member"
+    await send(ADMIN, ".warn @victim2 test")
+    await send(ADMIN, ".unwarn @victim2")
+    assert "retiré" in replies()[0] and not await db.user_warns(VICTIM["id"])
+    await send(ADMIN, ".warnlimit 3")
+    await send(ADMIN, ".warnaction mute")
+
+    # --- Notes ---
+    await send(ADMIN, ".save bienvenue Salut {name} !")
+    assert "#bienvenue" in replies()[0]
+    await send(RANDOM, "#bienvenue")
+    assert "Salut Random !" in replies()
+    photo_msg = await send(ADMIN, None, photo=[{"file_id": "NOTE_PIC", "file_unique_id": "n", "width": 9, "height": 9}],
+                           caption="regardez ça")
+    await send(ADMIN, ".save image", reply_to=photo_msg)
+    await send(RANDOM, ".get image")
+    assert session.of(SendPhoto)[0].photo == "NOTE_PIC" and session.of(SendPhoto)[0].caption == "regardez ça"
+    await send(RANDOM, ".notes")
+    assert "#bienvenue" in replies()[0] and "#image" in replies()[0]
+    await send(ADMIN, ".clear bienvenue")
+    await send(RANDOM, "#bienvenue")
+    assert not replies()
+
+    # --- Filtres ---
+    await send(ADMIN, '.filter "bonne nuit" Dors bien {mention} 😴',
+               entities=[{"type": "bold", "offset": 21, "length": 9}])
+    assert "bonne nuit" in replies()[0]
+    await send(RANDOM, "allez Bonne Nuit les gens")
+    assert any(t.startswith("<b>Dors bien</b>") and "Random" in t for t in replies()), replies()
+    await send(RANDOM, "bonne nuitée")
+    assert not replies(), "le filtre ne doit matcher que le mot entier"
+    await send(ADMIN, '.stop "bonne nuit"')
+    await send(RANDOM, "bonne nuit")
+    assert not any("Dors bien" in t for t in replies())
+
+    # --- Règles ---
+    await send(RANDOM, ".rules")
+    assert "anarchie" in replies()[0]
+    await send(ADMIN, ".setrules 1. Pas de pub\n2. On ne dit pas quoi")
+    await send(RANDOM, ".regles")
+    assert "Pas de pub" in replies()[0]
+
+    # --- Verrous ---
+    await send(ADMIN, ".lock liens")
+    utils._cooldowns.clear()
+    await send(RANDOM, "rejoins https://spam.example/promo")
+    assert session.of(DeleteMessage), "le lien n'a pas été supprimé"
+    assert any("PUB = MUTE" in t for t in replies())
+    await send(RANDOM, "mon canal : t.me/moncanal")
+    assert session.of(DeleteMessage), "lien t.me sans http pas détecté"
+    await send(GROUP_ADMIN, "lien officiel https://feurchat.fr")
+    assert not session.of(DeleteMessage), "un admin s'est fait supprimer son lien"
+    await send(ADMIN, ".lock transferts")
+    await send(RANDOM, "regardez", forward_origin={"type": "hidden_user", "date": int(time.time()), "sender_user_name": "x"})
+    assert session.of(DeleteMessage)
+    await send(ADMIN, ".lock medias")
+    perms = session.of(SetChatPermissions)[0].permissions
+    assert perms.can_send_photos is False and perms.can_send_videos is False and perms.can_send_messages is True
+    assert perms.can_send_polls is True, "un verrou a écrasé d'autres droits"
+    await send(ADMIN, ".locks")
+    assert "🔒 <code>medias</code>" in replies()[0] and "🔒 <code>liens</code>" in replies()[0]
+    await send(ADMIN, ".unlock medias")
+    assert session.of(SetChatPermissions)[0].permissions.can_send_photos is True
+    await send(ADMIN, ".unlock liens")
+    await send(ADMIN, ".unlock transferts")
+    await send(RANDOM, "https://ok.example")
+    assert not session.of(DeleteMessage)
+
+    # --- AFK ---
+    utils._cooldowns.clear()
+    await send(NOUSER, ".afk dodo")
+    assert "AFK" in replies()[0] and "dodo" in replies()[0]
+    nouser_msg = await send(NOUSER, ".afk dodo")  # la commande elle-même ne compte pas comme un retour
+    assert await db.get_afk(NOUSER["id"])
+    await send(RANDOM, "t'es là ?", reply_to=nouser_msg)
+    assert any("est AFK depuis" in t and "dodo" in t for t in replies()), replies()
+    await send(NOUSER, "me revoilà")
+    assert any(t.startswith("👋 Re") for t in replies()) and not await db.get_afk(NOUSER["id"])
+    await send(RANDOM, "brb je mange")
+    assert (await db.get_afk(RANDOM["id"]))["reason"] == "je mange"
+    await send(RANDOM, "fini")
+    assert not await db.get_afk(RANDOM["id"])
+
+    # --- Outils ---
+    spam = await send(RANDOM, "spam 1")
+    await send(RANDOM, "spam 2")
+    cmd = await send(ADMIN, ".purge", reply_to=spam)
+    assert session.of(DeleteMessages)[0].message_ids == list(range(spam["message_id"], cmd["message_id"] + 1))
+    await send(ADMIN, ".pin silence", reply_to=spam)
+    assert session.of(PinChatMessage)[0].disable_notification is True
+    await send(ADMIN, ".unpin")
+    assert session.of(UnpinChatMessage)
+    await send(RANDOM, ".id", reply_to=spam)
+    assert f"<code>{RANDOM['id']}</code>" in replies()[0] and f"<code>{CHAT}</code>" in replies()[0]
+    await send(RANDOM, ".ping")
+    assert "Pong !" in session.of(EditMessageText)[0].text
+    utils._cooldowns.clear()
+    await send(NOUSER, ".report", reply_to=spam)
+    assert any(t.startswith("#REPORT") for t in replies()) and session.of(ForwardMessage)
+    await send(VICTIM, "@admin regardez ça", reply_to=spam)
+    assert any(t.startswith("#REPORT") for t in replies()), "@admin n'a pas déclenché de signalement"
+
+    # --- Fun ---
+    utils._cooldowns.clear()
+    await send(RANDOM, ".blague")
+    assert replies()[0].removeprefix("😂 ") in JOKES
+    await send(NOUSER, ".de")
+    assert session.of(SendDice)[0].emoji == "🎲"
+    await send(VICTIM, ".boule je vais être admin ?")
+    assert replies()[0].removeprefix("🎱 ") in EIGHTBALL
+    await send(VICTIM, ".blague")
+    assert not replies(), "anti-spam des commandes fun"
+
+    # --- Aide ---
+    await send(ADMIN, ".help")
+    menu = session.of(SendMessage)[0]
+    assert "FeurBot" in menu.text and menu.reply_markup.inline_keyboard
+    await click(RANDOM, "help:warns")
+    assert "Warns" in session.of(EditMessageText)[0].text
+    await send(RANDOM, ".aide")
+    assert replies()[0] == help_module.MEMBER_HELP
+
+    # --- Annonce des changements de pseudo ---
+    await send(ADMIN, ".sangmata on")
+    newer = {**RANDOM, "username": "random_le_vrai"}
+    session.users[RANDOM["id"]] = newer
+    await send(newer, "salut")
+    assert any("Changement d'identité" in t and "@random_le_vrai" in t for t in replies()), replies()
+
+    # Tout le HTML envoyé (aide comprise) doit être valide
+    for _, text in help_module.SECTIONS.values():
+        check_html(text)
+    check_html(help_module.MENU)
 
     print("✅ Tous les tests passent")
 

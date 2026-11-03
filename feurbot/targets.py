@@ -65,7 +65,7 @@ async def resolve_target(
         if row is None:
             return None, rest, (
                 f"❌ Je ne connais pas {escape(first)}.\n"
-                "Il doit avoir écrit au moins une fois depuis mon arrivée. "
+                "Il doit avoir écrit au moins une fois depuis mon arrivée (je suis un bot, pas un voyant). "
                 "Sinon utilise son ID ou réponds à un de ses messages."
             )
         return Target.from_row(row), rest, None

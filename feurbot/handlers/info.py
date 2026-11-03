@@ -1,14 +1,14 @@
 from html import escape
 
-from aiogram import Bot, F, Router
-from aiogram.enums import ChatMemberStatus, ChatType
+from aiogram import Bot, Router
+from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from ..config import Config
 from ..db import Database, full_name
-from ..filters import IsAdmin, IsAnonymousAdmin
+from ..filters import IsAdmin
 from ..targets import Target, resolve_target
 from ..utils import (
     ACTION_LABELS,
@@ -21,37 +21,6 @@ from ..utils import (
 )
 
 router = Router(name="info")
-
-ALL_COMMANDS = ("ban", "unban", "deban", "mute", "unmute", "demute", "kick", "info", "logs", "help", "aide", "welcome")
-
-HELP = """<b>🤖 FeurGestion — commandes</b>
-
-<b>Modération</b> — en réponse à un message, ou avec <code>@pseudo</code> / ID
-<code>.ban [durée] [raison]</code> — bannir (sans durée = définitif)
-<code>.deban</code> — débannir (ou <code>.unban</code>)
-<code>.mute [durée] [raison]</code> — rendre muet (sans durée = définitif)
-<code>.demute</code> — rendre la parole (ou <code>.unmute</code>)
-<code>.kick [raison]</code> — expulser (peut revenir avec un lien)
-Raison et durée sont facultatives. Au <code>.ban</code> et au <code>.mute</code>, ta commande et le message visé sont supprimés.
-Bouton « ↩️ Annuler » sous chaque ban / mute.
-Durées : <code>30s</code> <code>10m</code> <code>1h</code> <code>1d</code>/<code>1j</code> <code>1w</code>, combinables : <code>1h30m</code>
-Ex : <code>.mute @pseudo 1h spam</code> · <code>.ban 123456789 pub</code>
-
-<b>Infos &amp; logs</b>
-<code>.info [@pseudo|ID]</code> — fiche complète + historique
-<code>.logs [nombre]</code> — dernières sanctions
-
-<b>Bienvenue</b>
-<code>.welcome</code> — voir le message actuel
-<code>.welcome texte</code> — changer le texte (garde le média)
-Photo / GIF / vidéo avec la légende <code>.welcome texte</code> (ou en réponse à un média) — avec média
-<code>.welcome nomedia</code> — retirer le média
-<code>.welcome on</code> / <code>.welcome off</code> — activer / désactiver
-<code>.welcome reset</code> — message par défaut
-Variables : <code>{mention}</code> <code>{name}</code> <code>{username}</code> <code>{id}</code> <code>{chat}</code> <code>{count}</code>
-
-Les commandes marchent aussi en privé avec moi."""
-
 
 def describe_status(member, cfg: Config) -> str:
     status = member.status
@@ -118,19 +87,6 @@ def _period_lines(periods, render, cfg: Config) -> list[str]:
     return lines
 
 
-@router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
-async def cmd_start(message: Message, cfg: Config) -> None:
-    if message.from_user.id in cfg.admin_ids:
-        await message.answer("✅ C'est bon, je t'enverrai les logs ici.\n\n" + HELP)
-    else:
-        await message.answer("🤖 Je suis le bot de gestion de feurchat.")
-
-
-@router.message(Command("help", "aide", prefix=PREFIXES, ignore_case=True), IsAdmin())
-async def cmd_help(message: Message) -> None:
-    await message.reply(HELP)
-
-
 @router.message(Command("info", prefix=PREFIXES, ignore_case=True), IsAdmin())
 async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Database, cfg: Config) -> None:
     target, _, error = await resolve_target(message, command.args or "", bot, db, cfg)
@@ -140,7 +96,7 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
     if target is None:
         target = Target.from_user(message.from_user)
 
-    status = "❔ Inconnu (jamais vu dans le groupe)"
+    status = "❔ Inconnu au bataillon (jamais vu dans le groupe)"
     is_bot = False
     try:
         member = await bot.get_chat_member(cfg.chat_id, target.id)
@@ -153,6 +109,7 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
 
     row = await db.get_user(target.id)
     counts = await db.action_counts(target.id)
+    warns = len(await db.user_warns(target.id))
     history = await db.user_actions(target.id, 10)
     names = await db.name_history(target.id)
     last_join = await db.last_action(target.id, "join")
@@ -177,7 +134,10 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
         "",
         "<b>⚖️ Sanctions</b>",
         f"🔨 Bans : {counts.get('ban', 0)} · 🔇 Mutes : {counts.get('mute', 0)} · 👢 Kicks : {counts.get('kick', 0)}",
+        f"⚠️ Warns en cours : {warns} (total reçus : {counts.get('warn', 0)})",
     ]
+    if not history:
+        lines.append("<i>Casier vierge. Suspect, non ?</i>")
     if history:
         lines += ["", "<b>🕓 Historique</b> <i>(10 derniers)</i>"]
         lines += ["• " + " — ".join(_entry(entry, cfg, admins)) for entry in history]
@@ -201,7 +161,7 @@ async def cmd_logs(message: Message, command: CommandObject, db: Database, cfg: 
     limit = max(1, min(int(arg), 100)) if arg.isdigit() else 15
     rows = await db.recent_sanctions(limit)
     if not rows:
-        await message.reply("📭 Aucune sanction enregistrée pour l'instant.")
+        await message.reply("📭 Aucune sanction pour l'instant. Soit le groupe est sage, soit les admins dorment.")
         return
 
     admins = await _admin_names(db, rows)
@@ -216,9 +176,18 @@ async def cmd_logs(message: Message, command: CommandObject, db: Database, cfg: 
         await message.reply(chunk)
 
 
-@router.message(Command(*ALL_COMMANDS, prefix=PREFIXES, ignore_case=True), IsAnonymousAdmin())
-async def anonymous_admin(message: Message) -> None:
+@router.message(Command("sangmata", prefix=PREFIXES, ignore_case=True), IsAdmin())
+async def cmd_sangmata(message: Message, command: CommandObject, db: Database) -> None:
+    arg = (command.args or "").strip().lower()
+    if arg in ("on", "off"):
+        await db.set_setting("sangmata", arg == "on")
+        await message.reply(
+            "🕵️ Activé : j'annoncerai dans le groupe chaque changement de pseudo ou de nom. Personne ne m'échappe."
+            if arg == "on"
+            else "🙈 Désactivé : je note toujours les changements (visibles dans <code>.info</code>), mais en silence."
+        )
+        return
+    state = "activées ✅" if await db.get_setting("sangmata", False) else "désactivées ⛔️"
     await message.reply(
-        "⚠️ Tu écris en mode anonyme, je ne peux pas savoir quel admin tu es.\n"
-        "Désactive « Rester anonyme » dans tes droits d'admin pour utiliser mes commandes."
+        f"Annonces de changement de pseudo : {state}\n<code>.sangmata on</code> / <code>.sangmata off</code>"
     )

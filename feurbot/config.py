@@ -44,6 +44,6 @@ def load_config() -> Config:
         chat_id=_parse_chat_id(os.environ["CHAT_ID"]),
         admin_ids=admin_ids,
         log_chat_id=log_chat_id,
-        db_path=os.getenv("DB_PATH", "data/feurgestion.db"),
+        db_path=os.getenv("DB_PATH", "data/feurbot.db"),
         tz=ZoneInfo(os.getenv("TZ", "Europe/Paris")),
     )

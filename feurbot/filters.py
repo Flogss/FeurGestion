@@ -14,6 +14,13 @@ class IsAdmin(Filter):
         return message.chat.id == cfg.chat_id or message.chat.type == ChatType.PRIVATE
 
 
+class IsMember(Filter):
+    """N'importe qui, dans le groupe géré ou en privé avec le bot (commandes publiques)."""
+
+    async def __call__(self, message: Message, cfg: Config) -> bool:
+        return message.chat.id == cfg.chat_id or message.chat.type == ChatType.PRIVATE
+
+
 class InManagedChat(Filter):
     async def __call__(self, event: ChatMemberUpdated, cfg: Config) -> bool:
         return event.chat.id == cfg.chat_id
