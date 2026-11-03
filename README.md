@@ -24,8 +24,8 @@ La cible se donne en **répondant à un message**, ou avec `@pseudo` / ID.
 Raison et durée sont facultatives : sans durée, le ban / mute est définitif.
 Durées : `30s`, `10m`, `1h`, `1d` (ou `1j`), `1w`, combinables (`1h30m`). Entre 30 s et 366 j.
 
-- Au `.mute` dans le groupe, la commande est supprimée, ainsi que le message auquel tu réponds
-  (seulement s'il est de la personne mute). Il est d'abord transféré dans les logs comme preuve.
+- Au `.ban` et au `.mute` dans le groupe, la commande est supprimée, ainsi que le message auquel tu réponds
+  (seulement s'il est de la personne sanctionnée). Il est d'abord transféré dans les logs comme preuve.
 - Sous chaque ban / mute, un bouton **↩️ Annuler** (réservé aux admins) débannit / démute
   et note l'annulation dans les logs.
 

@@ -225,13 +225,14 @@ async def main():
     assert not session.of(BanChatMember), "un non-admin a pu bannir"
 
     # Ban temporaire par @pseudo
-    await send(ADMIN, ".ban @victim 1h pub en masse")
+    cmd = await send(ADMIN, ".ban @victim 1h pub en masse")
     ban = session.of(BanChatMember)[0]
     assert ban.user_id == VICTIM["id"] and abs(ban.until_date - (time.time() + 3600)) < 5
     texts = replies()
     assert any("Ban" in t and "pub en masse" in t and "1h" in t for t in texts), texts
     assert any(t.startswith("#BAN #id111111") for t in texts), "pas de log envoyé à l'admin"
-    assert undo_button().startswith("undo:") and not session.of(DeleteMessages), "le ban ne doit rien supprimer"
+    assert undo_button().startswith("undo:")
+    assert session.of(DeleteMessages)[0].message_ids == [cmd["message_id"]], "la commande .ban doit être supprimée"
 
     # Déban (alias .deban)
     await send(ADMIN, ".deban 111111")
@@ -307,8 +308,12 @@ async def main():
     await send(ADMIN, ".info")
     assert "<code>8925708293</code>" in "\n".join(replies())
 
-    # Bouton Annuler sur un ban définitif sans raison
-    await send(ADMIN, ".ban @victim")
+    # Ban définitif sans raison, en réponse : preuve transférée puis commande + message visé supprimés
+    pub = await send(VICTIM, "rejoignez mon canal")
+    cmd = await send(ADMIN, ".ban", reply_to=pub)
+    deleted = session.of(DeleteMessages)
+    assert deleted and deleted[0].message_ids == [cmd["message_id"], pub["message_id"]], deleted
+    assert session.calls.index(session.of(ForwardMessage)[0]) < session.calls.index(deleted[0]), "preuve après suppression"
     assert any("définitif" in t and "Raison : aucune" in t for t in replies())
     data = undo_button()
     await click(RANDOM, data)

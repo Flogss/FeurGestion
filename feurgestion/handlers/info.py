@@ -32,7 +32,7 @@ HELP = """<b>🤖 FeurGestion — commandes</b>
 <code>.mute [durée] [raison]</code> — rendre muet (sans durée = définitif)
 <code>.demute</code> — rendre la parole (ou <code>.unmute</code>)
 <code>.kick [raison]</code> — expulser (peut revenir avec un lien)
-Raison et durée sont facultatives. Au <code>.mute</code>, ta commande et le message visé sont supprimés.
+Raison et durée sont facultatives. Au <code>.ban</code> et au <code>.mute</code>, ta commande et le message visé sont supprimés.
 Bouton « ↩️ Annuler » sous chaque ban / mute.
 Durées : <code>30s</code> <code>10m</code> <code>1h</code> <code>1d</code>/<code>1j</code> <code>1w</code>, combinables : <code>1h30m</code>
 Ex : <code>.mute @pseudo 1h spam</code> · <code>.ban 123456789 pub</code>

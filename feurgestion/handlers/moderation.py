@@ -151,8 +151,8 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
 
     in_group = message.chat.type != ChatType.PRIVATE
     reply = message.reply_to_message if in_group else None
-    # Au mute, on efface la commande et le message visé (seulement s'il est bien de la personne mute)
-    clean_up = action == "mute" and in_group
+    # Au ban / mute, on efface la commande et le message visé (seulement s'il est bien de la personne visée)
+    clean_up = action in ("ban", "mute") and in_group
     to_delete = [message.message_id] if clean_up else []
     if clean_up and reply and reply.from_user and reply.from_user.id == target.id:
         to_delete.append(reply.message_id)
