@@ -615,11 +615,80 @@ async def main():
     session.users[RANDOM["id"]] = newer
     await send(newer, "salut")
     assert any("Changement d'identité" in t and "@random_le_vrai" in t for t in replies()), replies()
+    await send(ADMIN, ".sangmata off")
+
+    # --- Modos ---
+    MOD = NOUSER
+    utils._cooldowns.clear()
+    await send(RANDOM, ".mod 555555")
+    assert replies() and replies()[0] in QUIPS["not_admin"] and not await db.is_mod(MOD["id"])
+    await send(ADMIN, ".mod 555555")
+    assert "est maintenant modo" in replies()[0] and any(t.startswith("#MOD") for t in replies())
+    assert await db.is_mod(MOD["id"])
+    await send(ADMIN, ".mod 555555")
+    assert "déjà modo" in replies()[0]
+    await send(ADMIN, ".mod @flo")
+    assert "déjà admin" in replies()[0]
+
+    # Le modo peut sanctionner, avec bouton Annuler
+    session.status[VICTIM["id"]] = "member"
+    await send(MOD, ".mute @victim2 1h spam")
+    assert session.of(RestrictChatMember) and session.of(RestrictChatMember)[0].user_id == VICTIM["id"]
+    mute_button = undo_button()
+    await click(RANDOM, mute_button)
+    assert session.of(AnswerCallbackQuery)[0].show_alert and not session.of(RestrictChatMember)
+    await click(MOD, mute_button)
+    assert session.of(RestrictChatMember)[0].permissions.can_send_messages, "le modo n'a pas pu annuler"
+    await send(MOD, ".warn @victim2 test modo")
+    assert "Warn 1/3" in replies()[0]
+    await send(MOD, ".resetwarns @victim2")
+    await send(MOD, ".info @victim2")
+    assert "Fiche utilisateur" in replies()[0]
+
+    # ... mais pas un admin, ni un autre modo, ni la config
+    await send(MOD, ".mute 8925708293 1h")
+    assert not session.of(RestrictChatMember) and "admin du bot" in replies()[0]
+    await send(ADMIN, f".mod {RANDOM['id']}")
+    await send(MOD, f".mute {RANDOM['id']} 1h")
+    assert not session.of(RestrictChatMember) and "modo, comme toi" in replies()[0]
+    await send(ADMIN, f".mute {RANDOM['id']} 1h")
+    assert session.of(RestrictChatMember), "un admin doit pouvoir sanctionner un modo"
+    await send(ADMIN, f".unmod {RANDOM['id']}")
+    assert "n'est plus modo" in replies()[0]
+    utils._cooldowns.clear()
+    await send(MOD, ".lock liens")
+    assert "T'es modo" in replies()[0] and not await db.get_setting("locks", [])
+
+    # Les verrous ne touchent pas les modos
+    await send(ADMIN, ".lock liens")
+    await send(MOD, "le site officiel : https://feurchat.example")
+    assert not session.of(DeleteMessage), "le lien d'un modo a été supprimé"
+    await send(ADMIN, ".unlock liens")
+
+    # Aide, équipe et fiche
+    await send(MOD, ".help")
+    menu = session.of(SendMessage)[0]
+    assert menu.text == help_module.MOD_MENU and len(sum(menu.reply_markup.inline_keyboard, [])) == 4
+    await send(VICTIM, ".mods")
+    assert "Sans Pseudo" in replies()[0] and "Admins" in replies()[0]
+    await send(ADMIN, ".info 555555")
+    assert "Rôle : 🛡 Modo" in replies()[0] and "Nommé modo" in replies()[0]
+
+    # Retrait
+    await send(ADMIN, ".unmod 555555")
+    assert "n'est plus modo" in replies()[0] and any(t.startswith("#UNMOD") for t in replies())
+    utils._cooldowns.clear()
+    await send(MOD, ".mute @victim2 1h")
+    assert not session.of(RestrictChatMember) and replies()[0] in QUIPS["not_admin"]
+    await send(ADMIN, ".unmod 555555")
+    assert "n'est pas modo" in replies()[0]
 
     # Tout le HTML envoyé (aide comprise) doit être valide
     for _, text in help_module.SECTIONS.values():
         check_html(text)
     check_html(help_module.MENU)
+    check_html(help_module.MOD_MENU)
+    check_html(help_module.MEMBER_HELP)
 
     print("✅ Tous les tests passent")
 

@@ -2,7 +2,7 @@ from aiogram import Dispatcher
 
 from .config import Config
 from .db import Database
-from .handlers import afk, events, fun, help, info, locks, moderation, notes, passive, tools, warns, welcome
+from .handlers import afk, events, fun, help, info, locks, moderation, mods, notes, passive, tools, warns, welcome
 from .middlewares import GuardMiddleware, TrackerMiddleware
 
 
@@ -21,6 +21,7 @@ def build_dispatcher(cfg: Config, db: Database) -> Dispatcher:
         fun.router,
         welcome.router,
         info.router,
+        mods.router,
         help.router,
         events.router,
         passive.router,

@@ -3,6 +3,7 @@ from aiogram.filters import Filter
 from aiogram.types import ChatMemberUpdated, Message
 
 from .config import Config
+from .db import Database
 
 
 class IsAdmin(Filter):
@@ -10,6 +11,20 @@ class IsAdmin(Filter):
 
     async def __call__(self, message: Message, cfg: Config) -> bool:
         if not message.from_user or message.from_user.id not in cfg.admin_ids:
+            return False
+        return message.chat.id == cfg.chat_id or message.chat.type == ChatType.PRIVATE
+
+
+async def is_staff(user_id: int, cfg: Config, db: Database) -> bool:
+    """Admin du bot ou modo."""
+    return user_id in cfg.admin_ids or await db.is_mod(user_id)
+
+
+class IsStaff(Filter):
+    """Admin du bot ou modo nommé avec .mod, dans le groupe géré ou en privé avec le bot."""
+
+    async def __call__(self, message: Message, cfg: Config, db: Database) -> bool:
+        if not message.from_user or not await is_staff(message.from_user.id, cfg, db):
             return False
         return message.chat.id == cfg.chat_id or message.chat.type == ChatType.PRIVATE
 

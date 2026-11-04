@@ -10,7 +10,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from ..config import Config
-from ..filters import IsAdmin, IsMember
+from ..filters import IsMember, IsStaff
 from ..targets import Target
 from ..utils import PREFIXES, delete_later, format_date, message_link, on_cooldown, send_log
 
@@ -49,7 +49,7 @@ async def cmd_report(message: Message, bot: Bot, cfg: Config) -> None:
     await report(message, bot, cfg)
 
 
-@router.message(Command("purge", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("purge", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_purge(message: Message, bot: Bot, cfg: Config) -> None:
     reply = message.reply_to_message
     if message.chat.type == ChatType.PRIVATE or reply is None:
@@ -69,7 +69,7 @@ async def cmd_purge(message: Message, bot: Bot, cfg: Config) -> None:
     delete_later(bot, notice.chat.id, notice.message_id, 8)
 
 
-@router.message(Command("del", "suppr", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("del", "suppr", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_del(message: Message, bot: Bot) -> None:
     reply = message.reply_to_message
     if message.chat.type == ChatType.PRIVATE or reply is None:
@@ -81,7 +81,7 @@ async def cmd_del(message: Message, bot: Bot) -> None:
         await message.reply(f"❌ Impossible : {exc.message}")
 
 
-@router.message(Command("pin", "epingle", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("pin", "epingle", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_pin(message: Message, command: CommandObject, bot: Bot) -> None:
     reply = message.reply_to_message
     if message.chat.type == ChatType.PRIVATE or reply is None:
@@ -96,7 +96,7 @@ async def cmd_pin(message: Message, command: CommandObject, bot: Bot) -> None:
     await message.reply("📌 Épinglé. Lisez-le, sinon à quoi bon. (feur)")
 
 
-@router.message(Command("unpin", "desepingle", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("unpin", "desepingle", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_unpin(message: Message, bot: Bot) -> None:
     reply = message.reply_to_message
     try:

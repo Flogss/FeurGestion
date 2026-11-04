@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS snippets (
     PRIMARY KEY (kind, name)
 );
 
+-- Modérateurs nommés avec .mod : ils peuvent sanctionner, pas configurer le bot
+CREATE TABLE IF NOT EXISTS mods (
+    user_id  INTEGER PRIMARY KEY,
+    added_by INTEGER,
+    added_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS afk (
     user_id INTEGER PRIMARY KEY,
     reason  TEXT,
@@ -340,3 +347,32 @@ class Database:
             await self.conn.execute("DELETE FROM afk WHERE user_id = ?", (user_id,))
             await self.conn.commit()
         return row
+
+    # --- Modos ---
+
+    async def add_mod(self, user_id: int, added_by: int) -> bool:
+        cur = await self.conn.execute(
+            "INSERT OR IGNORE INTO mods(user_id, added_by, added_at) VALUES (?, ?, ?)",
+            (user_id, added_by, int(time.time())),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def remove_mod(self, user_id: int) -> bool:
+        cur = await self.conn.execute("DELETE FROM mods WHERE user_id = ?", (user_id,))
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def is_mod(self, user_id: int) -> bool:
+        async with self.conn.execute("SELECT 1 FROM mods WHERE user_id = ?", (user_id,)) as cur:
+            return await cur.fetchone() is not None
+
+    async def list_mods(self) -> list[aiosqlite.Row]:
+        async with self.conn.execute(
+            """
+            SELECT m.*, u.username, u.first_name, u.last_name
+            FROM mods m LEFT JOIN users u ON u.user_id = m.user_id
+            ORDER BY m.added_at
+            """
+        ) as cur:
+            return list(await cur.fetchall())

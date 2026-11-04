@@ -6,6 +6,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..config import Config
+from ..db import Database
 from ..filters import IsAnonymousAdmin, IsMember
 from ..jokes import quip
 from ..utils import PREFIXES, on_cooldown
@@ -20,13 +21,21 @@ ADMIN_ONLY = (
     "save", "note", "clear", "delnote", "filter", "filtre", "stop", "delfilter", "setrules", "setregles",
     "lock", "verrou", "unlock", "deverrou", "locks", "verrous",
     "purge", "del", "suppr", "pin", "epingle", "unpin", "desepingle", "feur",
+    "mod", "modo", "promote", "unmod", "unmodo", "demod", "demote",
 )
 
 MENU = (
     "<b>🤖 FeurBot — panneau de contrôle</b>\n"
     "Le bot officiel de feurchat : de l'ordre, des logs, et des blagues nulles.\n"
     "Choisis une catégorie 👇\n\n"
-    "<i>Préfixes : <code>.</code> <code>!</code> <code>/</code> — ça marche aussi en privé avec moi.</i>"
+    "<i>👑 = réservé aux admins du bot. Préfixes : <code>.</code> <code>!</code> <code>/</code> — "
+    "ça marche aussi en privé avec moi.</i>"
+)
+MOD_MENU = (
+    "<b>🛡 FeurBot — espace modo</b>\n"
+    "Tu peux sanctionner, avertir, faire le ménage et consulter les fiches. "
+    "La config du bot reste aux admins (👑).\n"
+    "Choisis une catégorie 👇"
 )
 
 SECTIONS = {
@@ -50,8 +59,8 @@ SECTIONS = {
         "<code>.unwarn</code> — retirer le dernier warn\n"
         "<code>.resetwarns</code> — tout effacer\n"
         "<code>.warns</code> — voir les warns (tout le monde peut)\n"
-        "<code>.warnlimit 3</code> — nombre de warns avant la sanction\n"
-        "<code>.warnaction mute|ban|kick</code> — la sanction (mute = 24h)\n"
+        "👑 <code>.warnlimit 3</code> — nombre de warns avant la sanction\n"
+        "👑 <code>.warnaction mute|ban|kick</code> — la sanction (mute = 24h)\n"
         "<i>À la limite, la sanction tombe toute seule et le compteur repart à zéro.</i>",
     ),
     "notes": (
@@ -92,16 +101,27 @@ SECTIONS = {
         "<b>🔎 Infos et outils</b>\n"
         "<code>.info [@pseudo|ID]</code> — fiche : sanctions, warns, historique des pseudos\n"
         "<code>.logs [nombre]</code> — dernières sanctions\n"
-        "<code>.sangmata on|off</code> — annoncer dans le groupe quand quelqu'un change de pseudo\n"
+        "👑 <code>.sangmata on|off</code> — annoncer dans le groupe quand quelqu'un change de pseudo\n"
         "<code>.purge</code> — en réponse : efface tout jusqu'à ta commande\n"
         "<code>.del</code> — supprime le message visé\n"
         "<code>.pin [silence]</code> / <code>.unpin</code> — épingler / désépingler\n"
         "<code>.id</code> · <code>.ping</code> · <code>.report</code> — pour tout le monde",
     ),
+    "modos": (
+        "🛡 Modos",
+        "<b>🛡 Modos</b> — 👑 réservé aux admins du bot\n"
+        "<code>.mod @pseudo|ID</code> — nommer quelqu'un modo (ou en réponse)\n"
+        "<code>.unmod @pseudo|ID</code> — lui retirer\n"
+        "<code>.mods</code> — voir l'équipe (tout le monde)\n\n"
+        "Un modo peut : ban, mute, kick, warn, déban / démute, purge, del, pin, <code>.info</code>, "
+        "<code>.logs</code> et les boutons « Annuler ».\n"
+        "Il ne peut pas : toucher à la config du bot, ni sanctionner un autre modo ou un admin.\n"
+        "<i>Ce n'est pas un admin Telegram : si tu verrouilles tout le groupe, il ne peut plus écrire non plus.</i>",
+    ),
     "fun": (
         "🎉 Fun",
         "<b>🎉 Fun</b>\n"
-        "<code>.feur on|off</code> — réponses auto : quoi → feur, oui → stiti, non → bril, hein → deux…\n"
+        "👑 <code>.feur on|off</code> — réponses auto : quoi → feur, oui → stiti, non → bril, hein → deux…\n"
         "<code>.blague</code> — une blague nulle (pléonasme)\n"
         "<code>.pileouface</code> · <code>.de</code> · <code>.dard</code> · <code>.slot</code> · "
         "<code>.foot</code> · <code>.basket</code> · <code>.bowling</code>\n"
@@ -118,6 +138,7 @@ MEMBER_HELP = (
     "<code>.afk [raison]</code> — t'absenter (ou écris « brb »)\n"
     "<code>.report</code> — en réponse à un message : prévenir les admins\n"
     "<code>.warns</code> — ton casier judiciaire\n"
+    "<code>.mods</code> — l'équipe de modération\n"
     "<code>.id</code> · <code>.ping</code>\n"
     "<code>.blague</code> · <code>.pileouface</code> · <code>.de</code> · <code>.dard</code> · <code>.slot</code> · "
     "<code>.foot</code> · <code>.basket</code> · <code>.bowling</code> · <code>.boule question</code>\n\n"
@@ -125,23 +146,33 @@ MEMBER_HELP = (
 )
 
 
-def _menu_keyboard() -> InlineKeyboardMarkup:
-    buttons = [InlineKeyboardButton(text=title, callback_data=f"help:{key}") for key, (title, _) in SECTIONS.items()]
+# Sections visibles par les modos (le reste ne concerne que les admins)
+MOD_SECTIONS = ("moderation", "warns", "infos", "fun")
+
+
+def _menu_keyboard(keys) -> InlineKeyboardMarkup:
+    buttons = [InlineKeyboardButton(text=SECTIONS[key][0], callback_data=f"help:{key}") for key in keys]
     return InlineKeyboardMarkup(inline_keyboard=[buttons[i : i + 2] for i in range(0, len(buttons), 2)])
+
+
+async def _menu_for(user_id: int, cfg: Config, db: Database) -> tuple[str, InlineKeyboardMarkup | None]:
+    if user_id in cfg.admin_ids:
+        return MENU, _menu_keyboard(SECTIONS)
+    if await db.is_mod(user_id):
+        return MOD_MENU, _menu_keyboard(MOD_SECTIONS)
+    return MEMBER_HELP, None
 
 
 BACK = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Retour", callback_data="help:menu")]])
 
 
-async def send_help(message: Message, cfg: Config) -> None:
-    if message.from_user.id in cfg.admin_ids:
-        await message.answer(MENU, reply_markup=_menu_keyboard())
-    else:
-        await message.answer(MEMBER_HELP)
+async def send_help(message: Message, cfg: Config, db: Database) -> None:
+    text, keyboard = await _menu_for(message.from_user.id, cfg, db)
+    await message.answer(text, reply_markup=keyboard)
 
 
 @router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
-async def cmd_start(message: Message, cfg: Config) -> None:
+async def cmd_start(message: Message, cfg: Config, db: Database) -> None:
     if message.from_user.id in cfg.admin_ids:
         await message.answer("✅ C'est bon chef, je t'enverrai les logs ici. Même ceux à 3h du mat'.")
     else:
@@ -149,22 +180,23 @@ async def cmd_start(message: Message, cfg: Config) -> None:
             "🤖 Salut, moi c'est <b>FeurBot</b>, le bot de feurchat.\n"
             "Je fais régner l'ordre et les blagues nulles (surtout les blagues nulles)."
         )
-    await send_help(message, cfg)
+    await send_help(message, cfg, db)
 
 
 @router.message(Command("help", "aide", prefix=PREFIXES, ignore_case=True), IsMember())
-async def cmd_help(message: Message, cfg: Config) -> None:
-    await send_help(message, cfg)
+async def cmd_help(message: Message, cfg: Config, db: Database) -> None:
+    await send_help(message, cfg, db)
 
 
 @router.callback_query(F.data.startswith("help:"))
-async def on_help(callback: CallbackQuery) -> None:
+async def on_help(callback: CallbackQuery, cfg: Config, db: Database) -> None:
     key = callback.data.removeprefix("help:")
     if not isinstance(callback.message, Message):
         await callback.answer()
         return
     if key == "menu":
-        await callback.message.edit_text(MENU, reply_markup=_menu_keyboard())
+        text, keyboard = await _menu_for(callback.from_user.id, cfg, db)
+        await callback.message.edit_text(text, reply_markup=keyboard)
     elif key in SECTIONS:
         await callback.message.edit_text(SECTIONS[key][1], reply_markup=BACK)
     await callback.answer()
@@ -179,8 +211,12 @@ async def anonymous_admin(message: Message) -> None:
 
 
 @router.message(Command(*ADMIN_ONLY, prefix=PREFIXES, ignore_case=True), F.from_user)
-async def not_admin(message: Message, cfg: Config) -> None:
+async def not_admin(message: Message, cfg: Config, db: Database) -> None:
     if message.from_user.id in cfg.admin_ids or message.chat.id != cfg.chat_id:
         return
-    if not on_cooldown(f"taunt:{message.from_user.id}", 60):
+    if on_cooldown(f"taunt:{message.from_user.id}", 60):
+        return
+    if await db.is_mod(message.from_user.id):
+        await message.reply("🔒 Ça, c'est réservé aux admins du bot. T'es modo, c'est déjà pas mal 😌")
+    else:
         await message.reply(quip("not_admin"))

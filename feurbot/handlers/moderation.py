@@ -16,7 +16,7 @@ from aiogram.types import (
 
 from ..config import Config
 from ..db import Database
-from ..filters import IsAdmin
+from ..filters import IsStaff, is_staff
 from ..targets import Target, resolve_target
 from ..jokes import quip
 from ..utils import (
@@ -35,7 +35,7 @@ from ..utils import (
 log = logging.getLogger(__name__)
 
 router = Router(name="moderation")
-router.message.filter(IsAdmin())
+router.message.filter(IsStaff())
 
 MUTED = ChatPermissions(**{field: False for field in ChatPermissions.model_fields})
 ALL_ALLOWED = ChatPermissions(**{field: True for field in ChatPermissions.model_fields})
@@ -59,7 +59,9 @@ def undo_keyboard(action_id: int) -> InlineKeyboardMarkup:
     )
 
 
-async def check_target(action: str, target: Target, admin_id: int, bot: Bot, cfg: Config) -> str | None:
+async def check_target(
+    action: str, target: Target, admin_id: int, bot: Bot, cfg: Config, db: Database
+) -> str | None:
     if target.id == bot.id:
         return "🙃 Me sanctionner, moi ? Je suis intouchable. Comme le « feur » après un « quoi »."
     if action in PUNISHMENTS:
@@ -67,6 +69,8 @@ async def check_target(action: str, target: Target, admin_id: int, bot: Bot, cfg
             return "🙃 Te sanctionner toi-même ? Va voir un psy, pas un bot."
         if target.id in cfg.admin_ids:
             return "❌ C'est un admin du bot. Entre collègues, on se respecte."
+        if admin_id not in cfg.admin_ids and await db.is_mod(target.id):
+            return "❌ C'est un modo, comme toi. Pas de guerre civile : demande à un admin."
 
     try:
         member = await bot.get_chat_member(cfg.chat_id, target.id)
@@ -131,7 +135,7 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
     reason = rest.strip() or None
 
     admin = message.from_user
-    problem = await check_target(action, target, admin.id, bot, cfg)
+    problem = await check_target(action, target, admin.id, bot, cfg, db)
     if problem:
         await message.reply(problem)
         return
@@ -190,8 +194,8 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
 @router.callback_query(F.data.startswith("undo:"))
 async def on_undo(callback: CallbackQuery, bot: Bot, db: Database, cfg: Config) -> None:
     admin = callback.from_user
-    if admin.id not in cfg.admin_ids:
-        await callback.answer("⛔️ Pas touche, c'est réservé aux admins.", show_alert=True)
+    if not await is_staff(admin.id, cfg, db):
+        await callback.answer("⛔️ Pas touche, c'est réservé aux admins et aux modos.", show_alert=True)
         return
 
     row = await db.get_action(int(callback.data.removeprefix("undo:")))

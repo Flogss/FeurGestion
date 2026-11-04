@@ -8,7 +8,7 @@ from aiogram.types import Message
 
 from ..config import Config
 from ..db import Database, full_name
-from ..filters import IsAdmin
+from ..filters import IsAdmin, IsStaff
 from ..targets import Target, resolve_target
 from ..utils import (
     ACTION_LABELS,
@@ -87,7 +87,7 @@ def _period_lines(periods, render, cfg: Config) -> list[str]:
     return lines
 
 
-@router.message(Command("info", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("info", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Database, cfg: Config) -> None:
     target, _, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error:
@@ -123,6 +123,10 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
     ]
     if is_bot:
         lines.append("🤖 C'est un bot")
+    if target.id in cfg.admin_ids:
+        lines.append("Rôle : 👑 Admin du bot")
+    elif await db.is_mod(target.id):
+        lines.append("Rôle : 🛡 Modo")
     lines += [
         f"Statut : {status}",
         "",
@@ -155,7 +159,7 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
         await message.reply(chunk)
 
 
-@router.message(Command("logs", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("logs", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_logs(message: Message, command: CommandObject, db: Database, cfg: Config) -> None:
     arg = (command.args or "").strip()
     limit = max(1, min(int(arg), 100)) if arg.isdigit() else 15

@@ -14,7 +14,20 @@ Préfixes acceptés : `.` `!` `/`. Les commandes marchent aussi en privé avec l
 `.help` affiche une aide à boutons (version admin) ou la liste des commandes publiques (membres).
 Un non-admin qui tente une commande d'admin se fait gentiment chambrer.
 
-### Modération (admins)
+### Rôles
+
+- **Admins du bot** (`ADMIN_IDS`) : tout, y compris la configuration du bot et la nomination des modos.
+- **Modos** (nommés avec `.mod`) : ban, mute, kick, warn, déban / démute, purge, del, pin, `.info`, `.logs`
+  et les boutons « Annuler » / « Retirer ». Ils ne peuvent ni configurer le bot, ni sanctionner un autre modo ou un admin.
+  Les verrous ne les bloquent pas. Ce ne sont pas des admins Telegram : avec `.lock tout`, ils ne peuvent plus écrire.
+
+| Commande | Effet |
+| --- | --- |
+| `.mod @pseudo\|ID` | Nommer modo (ou en réponse) — admins du bot |
+| `.unmod @pseudo\|ID` | Retirer le rôle — admins du bot |
+| `.mods` | Voir l'équipe (tout le monde) |
+
+### Modération (admins et modos)
 
 La cible se donne en **répondant à un message**, ou avec `@pseudo` / ID.
 
@@ -32,7 +45,7 @@ Raison et durée sont facultatives. Durées : `30s`, `10m`, `1h`, `1d` (ou `1j`)
   (seulement s'il est de la personne sanctionnée). Il est d'abord transféré dans les logs comme preuve.
 - Sous chaque ban / mute, un bouton **↩️ Annuler** (réservé aux admins).
 
-### Warns
+### Warns (admins et modos, sauf `.warnlimit` / `.warnaction`)
 
 | Commande | Effet |
 | --- | --- |

@@ -24,6 +24,8 @@ ACTION_LABELS = {
     "kick": "👢 Kick",
     "warn": "⚠️ Warn",
     "unwarn": "🧽 Warn retiré",
+    "mod": "🛡 Nommé modo",
+    "unmod": "🪖 Plus modo",
     "join": "📥 Arrivée",
     "leave": "📤 Départ",
 }

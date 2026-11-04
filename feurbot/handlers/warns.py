@@ -9,7 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from ..config import Config
 from ..db import Database
-from ..filters import IsAdmin, IsMember
+from ..filters import IsAdmin, IsMember, IsStaff, is_staff
 from ..jokes import quip
 from ..targets import Target, resolve_target
 from ..utils import ACTION_LABELS, PREFIXES, format_date, format_duration, send_log, shorten
@@ -33,7 +33,7 @@ def _remove_keyboard(warn_id: int) -> InlineKeyboardMarkup:
     )
 
 
-@router.message(Command("warn", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("warn", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_warn(message: Message, command: CommandObject, bot: Bot, db: Database, cfg: Config) -> None:
     target, rest, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error:
@@ -42,7 +42,7 @@ async def cmd_warn(message: Message, command: CommandObject, bot: Bot, db: Datab
     if target is None:
         await message.reply("Usage : <code>.warn @pseudo|ID [raison]</code> ou en réponse. Je lis pas dans les pensées.")
         return
-    problem = await check_target("warn", target, message.from_user.id, bot, cfg)
+    problem = await check_target("warn", target, message.from_user.id, bot, cfg, db)
     if problem:
         await message.reply(problem)
         return
@@ -88,7 +88,7 @@ async def cmd_warn(message: Message, command: CommandObject, bot: Bot, db: Datab
     await send_log(bot, cfg, "\n".join(log_lines) + f"\n➡️ {label} automatique")
 
 
-@router.message(Command("unwarn", "rmwarn", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("unwarn", "rmwarn", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_unwarn(message: Message, command: CommandObject, bot: Bot, db: Database, cfg: Config) -> None:
     target, _, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error or target is None:
@@ -104,7 +104,7 @@ async def cmd_unwarn(message: Message, command: CommandObject, bot: Bot, db: Dat
     await message.reply(f"🧽 Dernier warn de {target.mention} retiré ({len(warns) - 1}/{conf['limit']}).")
 
 
-@router.message(Command("resetwarns", prefix=PREFIXES, ignore_case=True), IsAdmin())
+@router.message(Command("resetwarns", prefix=PREFIXES, ignore_case=True), IsStaff())
 async def cmd_resetwarns(message: Message, command: CommandObject, bot: Bot, db: Database, cfg: Config) -> None:
     target, _, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error or target is None:
@@ -164,8 +164,8 @@ async def cmd_warns(message: Message, command: CommandObject, bot: Bot, db: Data
 
 @router.callback_query(F.data.startswith("unwarn:"))
 async def on_unwarn(callback: CallbackQuery, db: Database, cfg: Config) -> None:
-    if callback.from_user.id not in cfg.admin_ids:
-        await callback.answer("⛔️ Pas touche, c'est réservé aux admins.", show_alert=True)
+    if not await is_staff(callback.from_user.id, cfg, db):
+        await callback.answer("⛔️ Pas touche, c'est réservé aux admins et aux modos.", show_alert=True)
         return
     warn = await db.get_warn(int(callback.data.removeprefix("unwarn:")))
     if warn is None or not await db.remove_warn(warn["id"]):

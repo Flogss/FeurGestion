@@ -92,7 +92,9 @@ async def _toggle(message: Message, command: CommandObject, locked: bool, bot: B
         label = DELETE_LOCKS[name]
 
     if locked:
-        await message.reply(f"🔒 Verrouillé : {label}.\n<i>Les admins, eux, font ce qu'ils veulent. Privilège.</i>")
+        await message.reply(
+            f"🔒 Verrouillé : {label}.\n<i>Les admins et les modos, eux, font ce qu'ils veulent. Privilège.</i>"
+        )
     else:
         await message.reply(f"🔓 Déverrouillé : {label}.\n<i>Soyez sages. Ou au moins discrets.</i>")
 
@@ -138,6 +140,8 @@ async def enforce(message: Message, bot: Bot, db: Database, cfg: Config) -> bool
     elif "liens" in active and has_link(message):
         violation = "liens"
     if violation is None or message.from_user.id in await group_admin_ids(bot, cfg):
+        return False
+    if await db.is_mod(message.from_user.id):
         return False
 
     try:
