@@ -76,8 +76,8 @@ SECTIONS = {
         "<b>🎵 Musique</b> — dans <b>n'importe quelle conversation</b>\n"
         "Tape <code>@feurzizibot</code> puis un titre ou un artiste, <b>sans appuyer sur Entrée</b> : "
         "les musiques de Deezer s'affichent au fur et à mesure.\n"
-        "Touche un résultat pour l'envoyer : un extrait de 30 s jouable, avec des boutons "
-        "🎧 Deezer · 🟢 Spotify · ▶️ YouTube pour l'écouter en entier.\n"
+        "Chaque musique a sa pochette. Touche-en une : elle s'envoie avec sa pochette, "
+        "puis se transforme en extrait de 30 s à écouter.\n"
         "<i>Rien tapé après @feurzizibot ? Je te montre le Top France.</i>",
     ),
     "pratique": (

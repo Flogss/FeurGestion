@@ -111,6 +111,12 @@ CREATE TABLE IF NOT EXISTS flocko (
     rolls   INTEGER NOT NULL DEFAULT 0
 );
 
+-- Extraits Deezer déjà envoyés à Telegram avec leur pochette (réutilisables tout de suite)
+CREATE TABLE IF NOT EXISTS deezer_audio (
+    track_id INTEGER PRIMARY KEY,
+    file_id  TEXT NOT NULL
+);
+
 -- Modérateurs nommés avec .mod : ils peuvent sanctionner, pas configurer le bot
 CREATE TABLE IF NOT EXISTS mods (
     user_id  INTEGER PRIMARY KEY,
@@ -624,3 +630,16 @@ class Database:
             (row["best"], row["best"], row["best_at"]),
         ) as cur:
             return (await cur.fetchone())["n"] + 1
+
+    # --- Extraits Deezer ---
+
+    async def get_deezer_audio(self, track_id: int) -> str | None:
+        async with self.conn.execute("SELECT file_id FROM deezer_audio WHERE track_id = ?", (track_id,)) as cur:
+            row = await cur.fetchone()
+        return row["file_id"] if row else None
+
+    async def set_deezer_audio(self, track_id: int, file_id: str) -> None:
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO deezer_audio(track_id, file_id) VALUES (?, ?)", (track_id, file_id)
+        )
+        await self.conn.commit()

@@ -37,6 +37,7 @@ from aiogram.methods import (  # noqa: E402
     RestrictChatMember,
     SendDice,
     SendMessage,
+    SendAudio,
     SendPhoto,
     SetChatPermissions,
     UnbanChatMember,
@@ -138,6 +139,9 @@ class FakeSession(BaseSession):
         if isinstance(method, GetChatMember):
             data = self.member(method.user_id)
             return MEMBER_KINDS[data["status"]].model_validate(data)
+        if type(method).__name__ == "SendAudio":
+            return Message(message_id=97, date=now, chat={"id": method.chat_id, "type": "private"},
+                           audio={"file_id": "AUDIO_FILE_ID", "file_unique_id": "a", "duration": 30})
         if type(method).__name__.startswith("Send"):
             check_html(getattr(method, "text", None) or getattr(method, "caption", None) or "")
             return Message(message_id=99, date=now, chat={"id": method.chat_id, "type": "supergroup"}, text="ok")
@@ -151,6 +155,8 @@ class FakeSession(BaseSession):
             return True
         if type(method).__name__ == "GetUserProfilePhotos":
             return UserProfilePhotos(total_count=0, photos=[])
+        if type(method).__name__ == "EditMessageMedia" and method.inline_message_id:
+            return True
         if type(method).__name__ == "EditMessageMedia":
             return Message(message_id=method.message_id, date=now, chat={"id": method.chat_id, "type": "supergroup"}, text="ok")
         if isinstance(method, (DeleteMessage, PinChatMessage, UnpinChatMessage)):
@@ -935,10 +941,11 @@ async def main():
     # --- Musique en inline (@feurzizibot titre) ---
     fake_tracks = [
         deezer.Track(1, "Balance ton quoi", "Angèle", "Brol", 189, "https://cdn.example/p.mp3",
-                     "https://www.deezer.com/track/1", "https://cdn.example/c.jpg"),
-        deezer.Track(2, "Titre <rare>", "Artiste & Co", "", 200, "", "https://www.deezer.com/track/2", "https://cdn.example/c2.jpg"),
+                     "https://www.deezer.com/track/1", "https://cdn.example/c250.jpg", "https://cdn.example/c500.jpg"),
+        deezer.Track(2, "Titre <rare>", "Artiste & Co", "", 200, "", "https://www.deezer.com/track/2",
+                     "https://cdn.example/d250.jpg", "https://cdn.example/d500.jpg"),
     ]
-    searches = []
+    searches, downloads = [], []
 
     async def fake_search(query, offset, limit):
         searches.append((query, offset))
@@ -949,25 +956,45 @@ async def main():
     async def fake_top(offset, limit):
         return fake_tracks[:1], False
 
+    async def fake_track(track_id):
+        return next(track for track in fake_tracks if track.id == track_id)
+
+    async def fake_download(url, max_bytes=5_000_000):
+        downloads.append(url)
+        if "broken" in url:
+            raise deezer.DeezerError("404")
+        return b"\xff\xd8\xffcover" if url.endswith(".jpg") else b"ID3audio"
+
     async def inline(query, offset=""):
         session.calls.clear()
         await dp.feed_update(bot, Update(update_id=next(counter), inline_query={
             "id": f"iq{next(counter)}", "from": RANDOM, "query": query, "offset": offset}))
         return next(c for c in session.calls if type(c).__name__ == "AnswerInlineQuery")
 
-    real_search, real_top = deezer.search, deezer.top_france
-    deezer.search, deezer.top_france = fake_search, fake_top
+    async def chosen(result_id, inline_message_id="IM1"):
+        session.calls.clear()
+        await dp.feed_update(bot, Update(update_id=next(counter), chosen_inline_result={
+            "result_id": result_id, "from": RANDOM, "query": "angele", "inline_message_id": inline_message_id}))
+
+    def edits():
+        return [c for c in session.calls if type(c).__name__ == "EditMessageMedia"]
+
+    real = deezer.search, deezer.top_france, deezer.track, deezer.download
+    deezer.search, deezer.top_france, deezer.track, deezer.download = fake_search, fake_top, fake_track, fake_download
     try:
+        # La liste : une pochette par musique, et rien d'autre que le titre et l'artiste
         answer = await inline("angele")
-        audio, article = answer.results
-        assert audio.type == "audio" and audio.audio_url == "https://cdn.example/p.mp3" and audio.performer == "Angèle"
-        assert article.type == "article", "sans extrait, il faut une carte avec la pochette"
-        check_html(audio.caption)
-        check_html(article.input_message_content.message_text)
-        links = [button.url for button in audio.reply_markup.inline_keyboard[0]]
-        assert links[0] == "https://www.deezer.com/track/1"
-        assert links[1] == "https://open.spotify.com/search/Ang%C3%A8le%20Balance%20ton%20quoi"
-        assert links[2] == "https://www.youtube.com/results?search_query=Ang%C3%A8le+Balance+ton+quoi"
+        card, no_preview = answer.results
+        assert card.type == "article" and card.thumbnail_url == "https://cdn.example/c250.jpg"
+        assert card.title == "Balance ton quoi" and card.description == "Angèle"
+        content = card.input_message_content
+        assert content.message_text == "🎵 <b>Balance ton quoi</b> — Angèle"
+        assert content.link_preview_options.url == "https://cdn.example/c500.jpg" and content.link_preview_options.show_above_text
+        assert card.reply_markup.inline_keyboard[0][0].callback_data == "play:1"
+        assert len(sum(card.reply_markup.inline_keyboard, [])) == 1, "plus de boutons Deezer / Spotify / YouTube"
+        assert no_preview.reply_markup is None
+        check_html(content.message_text)
+        check_html(no_preview.input_message_content.message_text)
         assert answer.next_offset == "20" and answer.button is None
         await inline("angele", offset="20")
         assert searches[-1] == ("angele", 20), "la page suivante n'est pas demandée à Deezer"
@@ -977,8 +1004,38 @@ async def main():
         assert not answer.results and "Rien pour" in answer.button.text
         answer = await inline("panne")
         assert not answer.results and "sieste" in answer.button.text and answer.cache_time == 5
+
+        # Choisie : la carte devient l'extrait, avec la pochette collée au fichier audio
+        await chosen("dz1")
+        upload = session.of(SendAudio)[0]
+        assert upload.chat_id == ADMIN["id"] and upload.disable_notification and upload.thumbnail is not None
+        assert session.of(DeleteMessage), "l'envoi de préparation doit être effacé"
+        edit = edits()[0]
+        assert edit.inline_message_id == "IM1" and edit.media.media == "AUDIO_FILE_ID" and edit.reply_markup is None
+        assert edit.media.caption == "🎵 <b>Balance ton quoi</b> — Angèle" and edit.media.performer == "Angèle"
+        assert await db.get_deezer_audio(1) == "AUDIO_FILE_ID"
+
+        # Deuxième fois : fichier déjà prêt, rien à renvoyer
+        await chosen("dz1", "IM2")
+        assert not session.of(SendAudio) and edits()[0].media.media == "AUDIO_FILE_ID"
+
+        # Sans « inline feedback » : le bouton ▶️ fait la même chose
+        session.calls.clear()
+        await dp.feed_update(bot, Update(update_id=next(counter), callback_query={
+            "id": "cbm", "from": VICTIM, "chat_instance": "ci", "data": "play:1", "inline_message_id": "IM3"}))
+        assert edits()[0].inline_message_id == "IM3" and "C'est parti" in session.of(AnswerCallbackQuery)[0].text
+
+        # Pochette introuvable : l'extrait part quand même, sans pochette
+        fake_tracks.append(deezer.Track(3, "Cassé", "X", "", 30, "https://cdn.example/broken.mp3",
+                                        "https://www.deezer.com/track/3", "", ""))
+        await chosen("dz3")
+        assert edits()[0].media.media == "https://cdn.example/broken.mp3"
+
+        # Morceau sans extrait : on ne touche à rien
+        await chosen("dz2")
+        assert not edits()
     finally:
-        deezer.search, deezer.top_france = real_search, real_top
+        deezer.search, deezer.top_france, deezer.track, deezer.download = real
     await send(RANDOM, "/start musique", chat=RANDOM["id"])
     assert "@feurzizibot" in replies()[0] and "sans appuyer sur Entrée" in replies()[0]
 

@@ -124,11 +124,15 @@ Variables utilisables (notes, filtres, règles, bienvenue) : `{mention}` `{name}
 ### Musique (mode inline)
 
 Dans n'importe quelle conversation, taper `@feurzizibot` puis un titre ou un artiste, sans appuyer sur Entrée :
-les morceaux de Deezer s'affichent au fur et à mesure (Top France si rien n'est tapé). Le résultat choisi est
-envoyé comme un extrait de 30 s jouable, avec des boutons 🎧 Deezer, 🟢 Spotify et ▶️ YouTube.
+les morceaux de Deezer s'affichent avec leur pochette (Top France si rien n'est tapé).
 
-Utilise l'API publique de Deezer (gratuite, sans clé) ; les boutons Spotify / YouTube ouvrent une recherche
-du morceau, sans clé non plus. Les morceaux complets ne sont pas envoyés (réservé aux applis officielles).
+Le morceau choisi part d'abord comme une carte (grande pochette + « 🎵 Titre — Artiste »), puis le bot la remplace
+par l'extrait de 30 s, pochette intégrée au lecteur. Le remplacement est automatique si l'« inline feedback »
+est activé dans @BotFather, sinon il se fait avec le bouton ▶️ de la carte.
+
+Pour coller la pochette au fichier, le bot envoie l'extrait une seule fois en silence dans la conversation
+privée de l'admin (`LOG_CHAT_ID`), l'efface aussitôt et garde le fichier en base pour les fois suivantes.
+Utilise l'API publique de Deezer (gratuite, sans clé). Les morceaux complets ne sont pas envoyés.
 
 ### Mémoire du groupe
 
@@ -162,7 +166,8 @@ avec le nom et le numéro du membre. 12 variantes au second degré par défaut.
 1. Ajouter le bot au groupe et le passer **admin** avec les droits **« Bannir des utilisateurs »**,
    **« Supprimer des messages »** et **« Épingler des messages »** (sans admin il ne voit pas les `.commandes`).
 2. L'admin envoie `/start` au bot en privé pour recevoir les logs.
-3. Pour la musique : dans @BotFather, `/setinline`, choisir le bot, puis un texte d'invite (ex. « Titre ou artiste… »).
+3. Pour la musique : dans @BotFather, `/setinline` (texte d'invite, ex. « Titre ou artiste… »)
+   puis `/setinlinefeedback` → `Enabled` pour que l'extrait remplace la carte tout seul.
 
 ## Variables d'environnement
 
