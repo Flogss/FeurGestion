@@ -59,7 +59,7 @@ from feurbot import utils  # noqa: E402
 from feurbot.app import build_dispatcher  # noqa: E402
 from feurbot.config import load_config  # noqa: E402
 from feurbot.db import Database  # noqa: E402
-from feurbot import commands  # noqa: E402
+from feurbot import commands, deezer  # noqa: E402
 from feurbot.handlers import fun, games, memory, passive, welcome  # noqa: E402
 from feurbot.handlers import help as help_module  # noqa: E402
 from feurbot.jokes import EIGHTBALL, HACK_STEPS, JOKES, QUOI_ANSWERS, QUIPS, analyze, feur_reply  # noqa: E402
@@ -147,7 +147,7 @@ class FakeSession(BaseSession):
         if isinstance(method, SetChatPermissions):
             self.permissions = method.permissions.model_dump(exclude_none=True)
             return True
-        if type(method).__name__ in ("SetMessageReaction", "SetMyCommands", "DeleteMyCommands"):
+        if type(method).__name__ in ("SetMessageReaction", "SetMyCommands", "DeleteMyCommands", "AnswerInlineQuery"):
             return True
         if type(method).__name__ == "GetUserProfilePhotos":
             return UserProfilePhotos(total_count=0, photos=[])
@@ -623,7 +623,7 @@ async def main():
     assert session.of(AnswerCallbackQuery)[0].show_alert and not session.of(EditMessageText), "rubrique staff visible"
     await send(RANDOM, "/aide")
     member_menu = session.of(SendMessage)[0]
-    assert "membre" in member_menu.text and len(sum(member_menu.reply_markup.inline_keyboard, [])) == 4
+    assert "membre" in member_menu.text and len(sum(member_menu.reply_markup.inline_keyboard, [])) == 5
     await send(RANDOM, "/help duel")
     assert "/duel" in replies()[0] and "Aide pour /duel" in replies()[0]
     await send(RANDOM, "/help ban")
@@ -688,7 +688,7 @@ async def main():
     # Aide, équipe et fiche
     await send(MOD, ".help")
     menu = session.of(SendMessage)[0]
-    assert "modo" in menu.text and len(sum(menu.reply_markup.inline_keyboard, [])) == 7
+    assert "modo" in menu.text and len(sum(menu.reply_markup.inline_keyboard, [])) == 8
     await send(VICTIM, ".mods")
     assert "Sans Pseudo" in replies()[0] and "Admins" in replies()[0]
     await send(ADMIN, ".info 555555")
@@ -931,6 +931,56 @@ async def main():
     # Ancien format (un seul texte personnalisé) : gardé parmi les variantes
     await db.set_setting("welcome", {"enabled": True, "text": "Yo {name}", "media_type": None, "media_id": None})
     assert "Yo {name}" in (await welcome.get_welcome(db))["texts"]
+
+    # --- Musique en inline (@feurzizibot titre) ---
+    fake_tracks = [
+        deezer.Track(1, "Balance ton quoi", "Angèle", "Brol", 189, "https://cdn.example/p.mp3",
+                     "https://www.deezer.com/track/1", "https://cdn.example/c.jpg"),
+        deezer.Track(2, "Titre <rare>", "Artiste & Co", "", 200, "", "https://www.deezer.com/track/2", "https://cdn.example/c2.jpg"),
+    ]
+    searches = []
+
+    async def fake_search(query, offset, limit):
+        searches.append((query, offset))
+        if query == "panne":
+            raise deezer.DeezerError("timeout")
+        return (fake_tracks, True) if query != "zzzz" else ([], False)
+
+    async def fake_top(offset, limit):
+        return fake_tracks[:1], False
+
+    async def inline(query, offset=""):
+        session.calls.clear()
+        await dp.feed_update(bot, Update(update_id=next(counter), inline_query={
+            "id": f"iq{next(counter)}", "from": RANDOM, "query": query, "offset": offset}))
+        return next(c for c in session.calls if type(c).__name__ == "AnswerInlineQuery")
+
+    real_search, real_top = deezer.search, deezer.top_france
+    deezer.search, deezer.top_france = fake_search, fake_top
+    try:
+        answer = await inline("angele")
+        audio, article = answer.results
+        assert audio.type == "audio" and audio.audio_url == "https://cdn.example/p.mp3" and audio.performer == "Angèle"
+        assert article.type == "article", "sans extrait, il faut une carte avec la pochette"
+        check_html(audio.caption)
+        check_html(article.input_message_content.message_text)
+        links = [button.url for button in audio.reply_markup.inline_keyboard[0]]
+        assert links[0] == "https://www.deezer.com/track/1"
+        assert links[1] == "https://open.spotify.com/search/Ang%C3%A8le%20Balance%20ton%20quoi"
+        assert links[2] == "https://www.youtube.com/results?search_query=Ang%C3%A8le+Balance+ton+quoi"
+        assert answer.next_offset == "20" and answer.button is None
+        await inline("angele", offset="20")
+        assert searches[-1] == ("angele", 20), "la page suivante n'est pas demandée à Deezer"
+        answer = await inline("")
+        assert "Top France" in answer.button.text and answer.next_offset == "" and len(answer.results) == 1
+        answer = await inline("zzzz")
+        assert not answer.results and "Rien pour" in answer.button.text
+        answer = await inline("panne")
+        assert not answer.results and "sieste" in answer.button.text and answer.cache_time == 5
+    finally:
+        deezer.search, deezer.top_france = real_search, real_top
+    await send(RANDOM, "/start musique", chat=RANDOM["id"])
+    assert "@feurzizibot" in replies()[0] and "sans appuyer sur Entrée" in replies()[0]
 
     # Tout le HTML envoyé (aide comprise) doit être valide
     for _, _, text in help_module.SECTIONS.values():

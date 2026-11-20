@@ -121,6 +121,15 @@ Variables utilisables (notes, filtres, règles, bienvenue) : `{mention}` `{name}
 - `/love @a @b`, `/qi @pseudo` : scores fixes pour la journée (pas de triche)
 - `/hack @pseudo` (faux piratage animé), `/clash @pseudo` (insulte vieille France), `/moqueur` en réponse
 
+### Musique (mode inline)
+
+Dans n'importe quelle conversation, taper `@feurzizibot` puis un titre ou un artiste, sans appuyer sur Entrée :
+les morceaux de Deezer s'affichent au fur et à mesure (Top France si rien n'est tapé). Le résultat choisi est
+envoyé comme un extrait de 30 s jouable, avec des boutons 🎧 Deezer, 🟢 Spotify et ▶️ YouTube.
+
+Utilise l'API publique de Deezer (gratuite, sans clé) ; les boutons Spotify / YouTube ouvrent une recherche
+du morceau, sans clé non plus. Les morceaux complets ne sont pas envoyés (réservé aux applis officielles).
+
 ### Mémoire du groupe
 
 - `/citer` en réponse : grave le message dans le livre d'or ; `/citation`, `/citation @pseudo`, `/citation 12` ;
@@ -153,6 +162,7 @@ avec le nom et le numéro du membre. 12 variantes au second degré par défaut.
 1. Ajouter le bot au groupe et le passer **admin** avec les droits **« Bannir des utilisateurs »**,
    **« Supprimer des messages »** et **« Épingler des messages »** (sans admin il ne voit pas les `.commandes`).
 2. L'admin envoie `/start` au bot en privé pour recevoir les logs.
+3. Pour la musique : dans @BotFather, `/setinline`, choisir le bot, puis un texte d'invite (ex. « Titre ou artiste… »).
 
 ## Variables d'environnement
 

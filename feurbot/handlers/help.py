@@ -70,6 +70,16 @@ SECTIONS = {
         "/anniv <i>JJ/MM</i> — je te le souhaite à minuit, devant tout le monde\n"
         "/anniversaires — les prochains à fêter",
     ),
+    "musique": (
+        "🎵 Musique",
+        ALL,
+        "<b>🎵 Musique</b> — dans <b>n'importe quelle conversation</b>\n"
+        "Tape <code>@feurzizibot</code> puis un titre ou un artiste, <b>sans appuyer sur Entrée</b> : "
+        "les musiques de Deezer s'affichent au fur et à mesure.\n"
+        "Touche un résultat pour l'envoyer : un extrait de 30 s jouable, avec des boutons "
+        "🎧 Deezer · 🟢 Spotify · ▶️ YouTube pour l'écouter en entier.\n"
+        "<i>Rien tapé après @feurzizibot ? Je te montre le Top France.</i>",
+    ),
     "pratique": (
         "🙋 Pratique",
         ALL,
@@ -174,6 +184,7 @@ SECTIONS = {
         "/warnlimit · /warnaction — la limite de warns",
     ),
 }
+MUSIC_HELP = SECTIONS["musique"][2]
 AUDIENCES = {ALL: (ALL,), STAFF: (ALL, STAFF), ADMIN: (ALL, STAFF, ADMIN)}
 ROLES = {ALL: "👤 membre", STAFF: "🛡 modo", ADMIN: "👑 admin du bot"}
 TIPS = [
@@ -184,6 +195,7 @@ TIPS = [
     "/help <i>commande</i> pour l'aide d'une seule commande, ex : /help duel",
     "/anniv 12/03 et je te le souhaite devant tout le monde.",
     "/roulette n'a jamais tué personne. Enfin, 1 minute par-ci par-là.",
+    "tape @feurzizibot suivi d'un titre pour chercher une musique, sans appuyer sur Entrée.",
 ]
 
 
@@ -231,7 +243,10 @@ async def send_help(message: Message, cfg: Config, db: Database) -> None:
 
 
 @router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
-async def cmd_start(message: Message, cfg: Config, db: Database) -> None:
+async def cmd_start(message: Message, command: CommandObject, cfg: Config, db: Database) -> None:
+    if command.args == "musique":
+        await message.answer(MUSIC_HELP)
+        return
     if message.from_user.id in cfg.admin_ids:
         await message.answer("✅ C'est bon chef, je t'enverrai les logs ici. Même ceux à 3h du mat'.")
     else:
