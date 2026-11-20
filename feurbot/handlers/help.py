@@ -1,6 +1,5 @@
 """Aide à boutons, /start, et répliques quand un non-admin joue au chef."""
 
-import random
 import re
 from html import escape
 
@@ -187,16 +186,6 @@ SECTIONS = {
 MUSIC_HELP = SECTIONS["musique"][2]
 AUDIENCES = {ALL: (ALL,), STAFF: (ALL, STAFF), ADMIN: (ALL, STAFF, ADMIN)}
 ROLES = {ALL: "👤 membre", STAFF: "🛡 modo", ADMIN: "👑 admin du bot"}
-TIPS = [
-    "dis « quoi » et observe.",
-    "/flocko se recharge toutes les 12 h. Le record, lui, reste à vie.",
-    "réponds à une perle avec /citer pour l'immortaliser.",
-    "il y a un mot interdit aujourd'hui. Je dis ça, je dis rien.",
-    "/help <i>commande</i> pour l'aide d'une seule commande, ex : /help duel",
-    "/anniv 12/03 et je te le souhaite devant tout le monde.",
-    "/roulette n'a jamais tué personne. Enfin, 1 minute par-ci par-là.",
-    "tape @feurzizibot suivi d'un titre pour chercher une musique, sans appuyer sur Entrée.",
-]
 
 
 async def _role(user_id: int, cfg: Config, db: Database) -> str:
@@ -209,16 +198,10 @@ def _visible(role: str) -> list[str]:
     return [key for key, (_, audience, _) in SECTIONS.items() if audience in AUDIENCES[role]]
 
 
-def _menu(name: str, role: str) -> tuple[str, InlineKeyboardMarkup]:
-    count = len(_visible(role))
-    text = (
-        f"<b>🤖 FeurBot</b> — le bot officiel de feurchat\n"
-        f"Salut {escape(name)} ! Tu es {ROLES[role]}, voilà tes {count} rubriques 👇\n\n"
-        f"💡 <i>Astuce : {random.choice(TIPS)}</i>\n"
-        "<i>Les commandes marchent avec <code>/</code>, <code>.</code> ou <code>!</code>, ici ou en privé.</i>"
-    )
+def _menu(role: str) -> tuple[str, InlineKeyboardMarkup]:
+    text = f"<b>🤖 FeurBot</b> · {ROLES[role]}"
     if role != ALL:
-        text += "\n<i>👑 = réservé aux admins du bot.</i>"
+        text += " · 👑 = admins"
     buttons = [InlineKeyboardButton(text=SECTIONS[key][0], callback_data=f"help:{key}") for key in _visible(role)]
     return text, InlineKeyboardMarkup(inline_keyboard=[buttons[i : i + 2] for i in range(0, len(buttons), 2)])
 
@@ -238,7 +221,7 @@ BACK = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ 
 
 async def send_help(message: Message, cfg: Config, db: Database) -> None:
     role = await _role(message.from_user.id, cfg, db)
-    text, keyboard = _menu(message.from_user.first_name, role)
+    text, keyboard = _menu(role)
     await message.answer(text, reply_markup=keyboard)
 
 
@@ -248,12 +231,7 @@ async def cmd_start(message: Message, command: CommandObject, cfg: Config, db: D
         await message.answer(MUSIC_HELP)
         return
     if message.from_user.id in cfg.admin_ids:
-        await message.answer("✅ C'est bon chef, je t'enverrai les logs ici. Même ceux à 3h du mat'.")
-    else:
-        await message.answer(
-            "🤖 Salut, moi c'est <b>FeurBot</b>, le bot de feurchat.\n"
-            "Je fais régner l'ordre et les blagues nulles (surtout les blagues nulles)."
-        )
+        await message.answer("✅ Logs activés ici.")
     await send_help(message, cfg, db)
 
 
@@ -267,7 +245,7 @@ async def cmd_help(message: Message, command: CommandObject, cfg: Config, db: Da
     if lines:
         await message.reply(f"🔎 <b>Aide pour /{escape(wanted)}</b>\n" + "\n".join(lines))
     else:
-        await message.reply(f"🤷 Je ne connais pas /{escape(wanted)}. Tape /help pour le menu complet.")
+        await message.reply(f"🤷 /{escape(wanted)} inconnue.")
 
 
 @router.callback_query(F.data.startswith("help:"))
@@ -278,7 +256,7 @@ async def on_help(callback: CallbackQuery, cfg: Config, db: Database) -> None:
         return
     role = await _role(callback.from_user.id, cfg, db)
     if key == "menu":
-        text, keyboard = _menu(callback.from_user.first_name, role)
+        text, keyboard = _menu(role)
         await callback.message.edit_text(text, reply_markup=keyboard)
     elif key in SECTIONS:
         if key not in _visible(role):
@@ -291,8 +269,7 @@ async def on_help(callback: CallbackQuery, cfg: Config, db: Database) -> None:
 @router.message(Command(*ADMIN_ONLY, prefix=PREFIXES, ignore_case=True), IsAnonymousAdmin())
 async def anonymous_admin(message: Message) -> None:
     await message.reply(
-        "⚠️ Tu écris en mode anonyme, je ne peux pas savoir quel admin tu es.\n"
-        "Désactive « Rester anonyme » dans tes droits d'admin. Le masque, c'est pour le carnaval."
+        "⚠️ Désactive « Rester anonyme » pour utiliser mes commandes."
     )
 
 
@@ -303,6 +280,6 @@ async def not_admin(message: Message, cfg: Config, db: Database) -> None:
     if on_cooldown(f"taunt:{message.from_user.id}", 60):
         return
     if await db.is_mod(message.from_user.id):
-        await message.reply("🔒 Ça, c'est réservé aux admins du bot. T'es modo, c'est déjà pas mal 😌")
+        await message.reply("🔒 Réservé aux admins.")
     else:
         await message.reply(quip("not_admin"))

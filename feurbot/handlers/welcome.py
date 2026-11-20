@@ -72,7 +72,7 @@ async def _save_with_preview(message: Message, conf: dict, text: str, bot: Bot, 
     try:
         await _preview(message, conf, text, bot, cfg)
     except TelegramBadRequest as exc:
-        await message.reply(f"❌ Telegram n'en veut pas : {escape(exc.message)}")
+        await message.reply(f"❌ Telegram : {escape(exc.message)}")
         return False
     await db.set_setting("welcome", conf)
     return True
@@ -88,9 +88,7 @@ async def cmd_welcome(message: Message, command: CommandObject, bot: Bot, db: Da
         conf["enabled"] = keyword == "on"
         await db.set_setting("welcome", conf)
         await message.reply(
-            "✅ Bienvenue activée. Les nouveaux seront accueillis comme des rois (ou presque)."
-            if conf["enabled"]
-            else "⛔️ Bienvenue désactivée. Les nouveaux entreront dans un silence gênant."
+            "✅ Bienvenue activée" if conf["enabled"] else "⛔️ Bienvenue désactivée"
         )
         return
 
@@ -101,27 +99,26 @@ async def cmd_welcome(message: Message, command: CommandObject, bot: Bot, db: Da
             conf["media_type"] = conf["media_id"] = None
         await db.set_setting("welcome", conf)
         await _preview(message, conf, pick_text(conf["texts"]), bot, cfg)
-        await message.reply(f"✅ C'est fait. {len(conf['texts'])} variante(s), en voici une ☝️")
+        await message.reply("✅ Fait ☝️")
         return
 
     if keyword in ("list", "liste") and len(args.split()) == 1:
-        lines = [f"<b>👋 {len(conf['texts'])} variante(s) de bienvenue</b> (une au hasard à chaque arrivée)"]
+        lines = ["<b>👋 Variantes</b>"]
         lines += [f"<b>{index}.</b> {escape(shorten(text, 160))}" for index, text in enumerate(conf["texts"], 1)]
-        lines.append("\n<code>.welcome add texte</code> · <code>.welcome del 3</code>")
         await message.reply("\n".join(lines))
         return
 
     if keyword in ("del", "suppr"):
         number = args.split()[1] if len(args.split()) > 1 else ""
         if not number.isdigit() or not 1 <= int(number) <= len(conf["texts"]):
-            await message.reply(f"Usage : <code>.welcome del 3</code> (numéro entre 1 et {len(conf['texts'])}, voir <code>.welcome list</code>).")
+            await message.reply(f"Usage : <code>/welcome del 1-{len(conf['texts'])}</code>")
             return
         if len(conf["texts"]) == 1:
-            await message.reply("❌ C'est la dernière variante. Sans elle, je bégaie. Change-la plutôt.")
+            await message.reply("❌ Dernière variante.")
             return
         conf["texts"].pop(int(number) - 1)
         await db.set_setting("welcome", conf)
-        await message.reply(f"🗑 Variante {number} supprimée. Il en reste {len(conf['texts'])}.")
+        await message.reply(f"🗑 Variante {number} supprimée")
         return
 
     media_type, media_id = extract_media(message)
@@ -133,21 +130,19 @@ async def cmd_welcome(message: Message, command: CommandObject, bot: Bot, db: Da
     if keyword == "add":
         text = html_args(message, 2)
         if not text:
-            await message.reply("Usage : <code>.welcome add Salut {mention} !</code>")
+            await message.reply("Usage : <code>/welcome add texte</code>")
             return
         conf["texts"].append(text)
         if await _save_with_preview(message, conf, text, bot, db, cfg):
-            await message.reply(f"✅ Variante ajoutée ({len(conf['texts'])} au total). Aperçu ☝️")
+            await message.reply("✅ Variante ajoutée ☝️")
         return
 
     new_text = html_args(message)
     if not new_text and not media_type:
         state = "✅ activée" if conf["enabled"] else "⛔️ désactivée"
         await message.reply(
-            f"<b>👋 Message de bienvenue</b> — {state}\n"
-            f"Variantes : {len(conf['texts'])} (une au hasard à chaque arrivée)\n"
-            f"Média : {MEDIA_LABELS.get(conf['media_type'], 'aucun')}\n"
-            "Aperçu avec toi dans le rôle du petit nouveau ⬇️"
+            f"<b>👋 Bienvenue</b> — {state} · {len(conf['texts'])} variantes\n"
+            f"Média : {MEDIA_LABELS.get(conf['media_type'], 'aucun')}"
         )
         await _preview(message, conf, pick_text(conf["texts"]), bot, cfg)
         return
@@ -155,5 +150,4 @@ async def cmd_welcome(message: Message, command: CommandObject, bot: Bot, db: Da
     if new_text:
         conf["texts"] = [new_text]
     if await _save_with_preview(message, conf, conf["texts"][0] if new_text else pick_text(conf["texts"]), bot, db, cfg):
-        note = "" if not new_text else "\n<i>C'est maintenant l'unique variante. <code>.welcome add</code> pour en ajouter d'autres.</i>"
-        await message.reply(f"✅ Enregistré ! Aperçu ☝️ (oui, c'est toi le nouveau pour l'occasion){note}")
+        await message.reply("✅ Enregistré ☝️")

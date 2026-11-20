@@ -78,8 +78,7 @@ async def _feur(message: Message, text: str, db: Database) -> bool:
 
     if count in FEUR_TITLES:
         await message.reply(
-            f"🏅 {Target.from_user(message.from_user).mention} débloque le titre « {FEUR_TITLES[count]} » "
-            f"avec {count} « quoi » au compteur. Feur.\n<i>Le classement complet : <code>.feurboard</code></i>"
+            f"🏅 {Target.from_user(message.from_user).mention} : {FEUR_TITLES[count]} ({count} « quoi »)"
         )
         return True
     if result.answer and not on_cooldown(f"feur:{message.chat.id}", 10):

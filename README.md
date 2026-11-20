@@ -106,7 +106,7 @@ Variables utilisables (notes, filtres, règles, bienvenue) : `{mention}` `{name}
 | Commande | Effet |
 | --- | --- |
 | `/flocko` | Ton taux de flocko : un nouveau tirage toutes les 12 h |
-| `/topflocko` | Classement en image (records de tous les temps, jamais remis à zéro) ; ⬅️ page suivante, ➡️ page précédente |
+| `/topflocko` | Classement en image style mème (bulles « quoi ? » / « feur. »), records de tous les temps, jamais remis à zéro ; ⬅️ page suivante, ➡️ page précédente |
 | `/roulette` | 1 chance sur 6 d'être mute 1 minute (les admins Telegram sont immunisés) |
 | `/duel @pseudo` | L'autre accepte avec un bouton, le perdant est mute 1 minute |
 | `/prison` | Qui est mute / banni en ce moment, avec le temps restant |
@@ -151,6 +151,14 @@ avec le nom et le numéro du membre. 12 variantes au second degré par défaut.
 - `/welcome Salut {mention} !` — tout remplacer par un seul texte (la mise en forme Telegram est gardée)
 - Photo / GIF / vidéo avec la légende `/welcome`, ou en réponse à un média — ajoute le média
 - `/welcome nomedia`, `/welcome on` / `/welcome off`, `/welcome reset`
+
+## Performances
+
+- Serveur Railway à Amsterdam (`eu-west`), à côté des serveurs de Telegram.
+- Réglages, filtres, AFK, modos et profils connus gardés en mémoire : un message ordinaire ne lit plus la base.
+- SQLite en WAL avec `synchronous=NORMAL` ; `uvloop` et `orjson` pour la boucle et le JSON.
+- `/topflocko` : image dessinée en ~15 ms (fond mis en cache, JPEG), photos de profil attendues 2 s maximum,
+  et image réutilisée telle quelle tant que le classement ne change pas. Pillow n'est chargé qu'au premier appel.
 
 ## Logs
 

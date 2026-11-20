@@ -1,4 +1,7 @@
-"""Image du /topflocko : podium pour le top 3, puis des cartes avec barre de progression."""
+"""Image du /topflocko, style mème / BD : fond jaune à trames, bulles « quoi ? » / « feur. », cases à bord noir.
+
+Pas de flou ni de dégradé coûteux : le fond est calculé une fois puis réutilisé, et l'image part en JPEG.
+"""
 
 import io
 import os
@@ -6,22 +9,26 @@ import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
-WIDTH = 1080
-PAD = 48
-ROW_HEIGHT = 96
-ROW_GAP = 14
-PODIUM_HEIGHT = 470
+WIDTH = 900
+PAD = 40
+ROW_HEIGHT = 84
+ROW_GAP = 18
+HEADER_HEIGHT = 250
+PODIUM_HEIGHT = 420
+BOTTOM = 34
 
+INK = (27, 27, 27)
+YELLOW = (255, 210, 63)
+DOTS = (247, 197, 45)
 WHITE = (255, 255, 255)
-MUTED = (185, 179, 217)
-GOLD = (255, 213, 74)
-SILVER = (207, 216, 220)
-BRONZE = (224, 161, 107)
-VIOLET = (108, 92, 231)
+GREY = (110, 110, 110)
+GOLD = (255, 195, 0)
+SILVER = (192, 199, 209)
+BRONZE = (224, 142, 69)
 MEDALS = {1: GOLD, 2: SILVER, 3: BRONZE}
-AVATAR_COLORS = [(255, 107, 129), (255, 159, 67), (46, 213, 115), (30, 144, 255), (165, 94, 234), (255, 71, 87)]
+AVATAR_COLORS = [(255, 79, 121), (58, 134, 255), (46, 196, 182), (255, 159, 28), (155, 93, 229), (241, 91, 181)]
 
 FONTS = {
     "bold": [
@@ -86,7 +93,7 @@ def clean_name(name: str) -> str:
     """Retire les emojis et symboles que la police ne sait pas dessiner (sinon : des carrés)."""
     kept = [
         _replacement(char) for char in name
-        if char not in "\u200d\ufe0f" and unicodedata.category(char) not in ("So", "Sk", "Cs", "Co", "Cn", "Cf")
+        if char not in "‍️" and unicodedata.category(char) not in ("So", "Sk", "Cs", "Co", "Cn", "Cf")
     ]
     return " ".join("".join(kept).split()) or "Anonyme"
 
@@ -100,172 +107,179 @@ def _fit(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max
 
 
 def _bar_color(value: int) -> tuple[int, int, int]:
-    """Rouge -> orange -> vert selon le score."""
-    stops = [(0, (255, 77, 109)), (50, (255, 181, 71)), (100, (43, 214, 123))]
-    for (start, c1), (end, c2) in zip(stops, stops[1:]):
-        if value <= end:
-            ratio = (value - start) / (end - start)
-            return tuple(round(a + (b - a) * ratio) for a, b in zip(c1, c2))
-    return stops[-1][1]
+    if value >= 100:
+        return GOLD
+    if value >= 67:
+        return (46, 196, 182)
+    if value >= 34:
+        return (255, 159, 28)
+    return (255, 79, 121)
 
 
+@lru_cache(maxsize=8)
 def _background(height: int) -> Image.Image:
-    top, bottom = (26, 11, 61), (8, 22, 58)
-    gradient = Image.new("RGB", (1, height))
-    for y in range(height):
-        ratio = y / max(height - 1, 1)
-        gradient.putpixel((0, y), tuple(round(a + (b - a) * ratio) for a, b in zip(top, bottom)))
-    image = gradient.resize((WIDTH, height)).convert("RGBA")
-
-    # Halos lumineux flous pour donner du relief
-    glow = Image.new("RGBA", (WIDTH, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(glow)
-    draw.ellipse((-220, -260, 520, 380), fill=(214, 51, 255, 120))
-    draw.ellipse((WIDTH - 420, 120, WIDTH + 260, 760), fill=(0, 194, 255, 90))
-    draw.ellipse((200, height - 300, 900, height + 300), fill=(255, 77, 109, 60))
-    image.alpha_composite(glow.filter(ImageFilter.GaussianBlur(110)))
+    """Fond jaune avec une trame de points façon BD (calculé une fois par hauteur)."""
+    image = Image.new("RGB", (WIDTH, height), YELLOW)
+    draw = ImageDraw.Draw(image)
+    step = 22
+    for row, y in enumerate(range(0, height + step, step)):
+        offset = step // 2 if row % 2 else 0
+        for x in range(-step + offset, WIDTH + step, step):
+            draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=DOTS)
     return image
+
+
+def _panel(draw: ImageDraw.ImageDraw, box, fill=WHITE, radius=18, border=4, shadow=7) -> None:
+    """Case de BD : ombre noire décalée, fond, contour épais."""
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle((x0 + shadow, y0 + shadow, x1 + shadow, y1 + shadow), radius=radius, fill=INK)
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=INK, width=border)
+
+
+def _bubble(draw: ImageDraw.ImageDraw, center, text: str, size: int, tail: str) -> None:
+    """Bulle de dialogue blanche avec sa petite queue."""
+    font = _font("bold", size)
+    width = draw.textlength(text, font=font) + size * 1.4
+    height = size * 1.9
+    x, y = center
+    box = (x - width / 2, y - height / 2, x + width / 2, y + height / 2)
+    tip_x = box[0] + width * 0.3 if tail == "left" else box[2] - width * 0.3
+    direction = -1 if tail == "left" else 1
+    tail_points = [(tip_x - 12, box[3] - 6), (tip_x + 12, box[3] - 6), (tip_x + direction * 24, box[3] + 24)]
+    draw.polygon(tail_points, fill=WHITE)
+    draw.line([tail_points[0], tail_points[2], tail_points[1]], fill=INK, width=4, joint="curve")
+    draw.rounded_rectangle(box, radius=height / 2, fill=WHITE, outline=INK, width=4)
+    # On efface le contour de la bulle à la jonction avec la queue
+    draw.line([(tail_points[0][0] + 3, box[3] - 2), (tail_points[1][0] - 3, box[3] - 2)], fill=WHITE, width=5)
+    draw.text((x, y), text, font=font, fill=INK, anchor="mm")
 
 
 def _avatar(entry: Entry, size: int) -> Image.Image:
     picture = None
     if entry.avatar:
         try:
-            picture = Image.open(io.BytesIO(entry.avatar)).convert("RGB").resize((size, size), Image.LANCZOS)
+            picture = Image.open(io.BytesIO(entry.avatar)).convert("RGB").resize((size, size), Image.BILINEAR)
         except OSError:
             picture = None
     if picture is None:
         picture = Image.new("RGB", (size, size), AVATAR_COLORS[entry.user_id % len(AVATAR_COLORS)])
-        draw = ImageDraw.Draw(picture)
-        initial = clean_name(entry.name)[0].upper()
-        draw.text((size / 2, size / 2), initial, font=_font("bold", int(size * 0.45)), fill=WHITE, anchor="mm")
-    mask = Image.new("L", (size * 4, size * 4), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, size * 4, size * 4), fill=255)
+        ImageDraw.Draw(picture).text(
+            (size / 2, size / 2), clean_name(entry.name)[0].upper(), font=_font("bold", int(size * 0.46)),
+            fill=WHITE, anchor="mm", stroke_width=max(2, size // 30), stroke_fill=INK,
+        )
+    mask = Image.new("L", (size * 3, size * 3), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size * 3, size * 3), fill=255)
     rounded = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    rounded.paste(picture, (0, 0), mask.resize((size, size), Image.LANCZOS))
+    rounded.paste(picture, (0, 0), mask.resize((size, size), Image.BILINEAR))
     return rounded
 
 
-def _paste_avatar(image: Image.Image, entry: Entry, center: tuple[int, int], size: int, ring) -> None:
+def _paste_avatar(image: Image.Image, entry: Entry, center, size: int, ring) -> None:
     x, y = center
     draw = ImageDraw.Draw(image)
-    border = max(4, size // 22)
-    draw.ellipse((x - size / 2 - border, y - size / 2 - border, x + size / 2 + border, y + size / 2 + border), fill=ring)
-    image.alpha_composite(_avatar(entry, size), (round(x - size / 2), round(y - size / 2)))
+    draw.ellipse((x - size / 2 - 7, y - size / 2 - 7, x + size / 2 + 7, y + size / 2 + 7), fill=INK)
+    draw.ellipse((x - size / 2 - 4, y - size / 2 - 4, x + size / 2 + 4, y + size / 2 + 4), fill=ring)
+    avatar = _avatar(entry, size)
+    image.paste(avatar, (round(x - size / 2), round(y - size / 2)), avatar)
 
 
-def _badge(draw: ImageDraw.ImageDraw, center: tuple[int, int], radius: int, rank: int) -> None:
-    color = MEDALS.get(rank, VIOLET)
+def _badge(draw: ImageDraw.ImageDraw, center, radius: int, rank: int) -> None:
     x, y = center
-    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color, outline=(20, 12, 45), width=4)
-    text_color = (40, 28, 10) if rank in MEDALS else WHITE
-    size = int(radius * (1.05 if rank < 100 else 0.8))
-    draw.text((x, y + 1), str(rank), font=_font("bold", size), fill=text_color, anchor="mm")
+    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=MEDALS.get(rank, INK), outline=INK, width=4)
+    size = int(radius * (1.0 if rank < 100 else 0.75))
+    color = INK if rank in MEDALS else YELLOW
+    draw.text((x, y + 1), str(rank), font=_font("bold", size), fill=color, anchor="mm")
 
 
 def _header(image: Image.Image, players: int, page: int, pages: int) -> None:
-    tag = "RECORDS DE TOUS LES TEMPS"
-    tag_font = _font("bold", 22)
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    tag_width = ImageDraw.Draw(overlay).textlength(tag, font=tag_font) + 44
-    ImageDraw.Draw(overlay).rounded_rectangle(
-        ((WIDTH - tag_width) / 2, 46, (WIDTH + tag_width) / 2, 86), radius=20, fill=(255, 213, 74, 38), outline=GOLD, width=2
+    # Titre façon mème (blanc cerné de noir), légèrement penché
+    layer = Image.new("RGBA", (WIDTH, 150), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text(
+        (WIDTH / 2, 75), "TOP FLOCKO", font=_font("bold", 92), fill=WHITE, anchor="mm", stroke_width=8, stroke_fill=INK
     )
-    image.alpha_composite(overlay)
+    layer = layer.rotate(3, resample=Image.BICUBIC)
+    image.paste(layer, (0, 64), layer)
+
     draw = ImageDraw.Draw(image)
-    draw.text((WIDTH / 2, 67), tag, font=tag_font, fill=GOLD, anchor="mm")
-    title_font = _font("bold", 96)
-    draw.text((WIDTH / 2 + 4, 158), "TOP FLOCKO", font=title_font, fill=(0, 0, 0, 120), anchor="mm")
-    draw.text((WIDTH / 2, 152), "TOP FLOCKO", font=title_font, fill=WHITE, anchor="mm")
-    subtitle = f"feurchat  ·  {players} joueur{'s' if players > 1 else ''}  ·  page {page}/{pages}"
-    draw.text((WIDTH / 2, 222), subtitle, font=_font("regular", 28), fill=MUTED, anchor="mm")
+    _bubble(draw, (150, 46), "quoi ?", 30, "left")
+    _bubble(draw, (WIDTH - 150, 52), "feur.", 30, "right")
+
+    subtitle = f"feurchat · {players} joueur{'s' if players > 1 else ''} · page {page}/{pages}"
+    font = _font("bold", 24)
+    width = draw.textlength(subtitle, font=font) + 44
+    draw.rounded_rectangle(((WIDTH - width) / 2, 204, (WIDTH + width) / 2, 242), radius=19, fill=INK)
+    draw.text((WIDTH / 2, 223), subtitle, font=font, fill=YELLOW, anchor="mm")
+
+
+def _crown(draw: ImageDraw.ImageDraw, center) -> None:
+    x, y = center
+    points = [(x - 30, y + 16), (x - 30, y - 8), (x - 15, y + 4), (x, y - 18), (x + 15, y + 4), (x + 30, y - 8), (x + 30, y + 16)]
+    draw.polygon(points, fill=GOLD)
+    draw.line(points + [points[0]], fill=INK, width=4, joint="curve")
 
 
 def _podium(image: Image.Image, entries: list[Entry], top: int) -> None:
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    odraw = ImageDraw.Draw(overlay)
-    # (rang, centre x, taille avatar, décalage vertical, hauteur du socle)
-    spots = [(2, WIDTH / 2 - 330, 128, 52, 70), (1, WIDTH / 2, 160, 0, 110), (3, WIDTH / 2 + 330, 128, 72, 50)]
-    by_rank = {entry.rank: entry for entry in entries}
-    base = top + PODIUM_HEIGHT - 20
-    for rank, x, _, _, height in spots:
-        if rank in by_rank:
-            color = MEDALS[rank]
-            odraw.rounded_rectangle((x - 140, base - height, x + 140, base), radius=22, fill=(*color, 70))
-            odraw.rounded_rectangle((x - 140, base - height, x + 140, base - height + 8), radius=4, fill=(*color, 200))
-    image.alpha_composite(overlay)
-
+    """Trois cases posées sur des marches : la plus haute pour le 1er."""
     draw = ImageDraw.Draw(image)
-    for rank, x, size, offset, height in spots:
+    by_rank = {entry.rank: entry for entry in entries}
+    base = top + PODIUM_HEIGHT - 26
+    # (rang, centre x, largeur, taille de l'avatar, hauteur de la marche)
+    spots = [(2, WIDTH / 2 - 285, 250, 104, 76), (1, WIDTH / 2, 270, 124, 110), (3, WIDTH / 2 + 285, 250, 104, 54)]
+    for rank, x, width, size, step in spots:
         entry = by_rank.get(rank)
         if entry is None:
             continue
-        center_y = top + 40 + offset + size / 2
+        content = 20 + size + 14 + 40 + 56
+        box = (x - width / 2, base - step - content, x + width / 2, base)
+        _panel(draw, box)
+        color = MEDALS[rank]
+        draw.rounded_rectangle((box[0], base - step, box[2], base), radius=18, fill=color, outline=INK, width=4)
+        draw.text((x, base - step / 2), f"#{rank}", font=_font("bold", 38 if rank == 1 else 32), fill=INK, anchor="mm")
+
+        center_y = box[1] + 20 + 7 + size / 2
+        _paste_avatar(image, entry, (x, center_y), size, color)
         if rank == 1:
-            _crown(draw, (x, top + 22 + offset))
-        _paste_avatar(image, entry, (x, center_y), size, MEDALS[rank])
-        _badge(draw, (x + size / 2 - 12, center_y + size / 2 - 12), 24, rank)
-        name_y = center_y + size / 2 + 34
-        name_font = _font("bold", 30 if rank == 1 else 27)
-        draw.text((x, name_y), _fit(draw, clean_name(entry.name), name_font, 290), font=name_font, fill=WHITE, anchor="mm")
+            _crown(draw, (x, box[1] - 2))
+        name_y = center_y + size / 2 + 7 + 22
+        name_font = _font("bold", 26)
+        draw.text((x, name_y), _fit(draw, clean_name(entry.name), name_font, width - 30), font=name_font, fill=INK, anchor="mm")
         draw.text(
-            (x, name_y + 50), f"{entry.value} %", font=_font("bold", 54 if rank == 1 else 46),
-            fill=_bar_color(entry.value), anchor="mm",
+            (x, name_y + 44), f"{entry.value} %", font=_font("bold", 48 if rank == 1 else 42),
+            fill=_bar_color(entry.value), anchor="mm", stroke_width=3, stroke_fill=INK,
         )
-        draw.text((x, base - height / 2), f"#{rank}", font=_font("bold", 34), fill=WHITE, anchor="mm")
-
-
-def _crown(draw: ImageDraw.ImageDraw, center: tuple[float, float]) -> None:
-    x, y = center
-    points = [(x - 34, y + 18), (x - 34, y - 8), (x - 17, y + 4), (x, y - 20), (x + 17, y + 4), (x + 34, y - 8), (x + 34, y + 18)]
-    draw.polygon(points, fill=GOLD)
-    for px in (x - 34, x, x + 34):
-        draw.ellipse((px - 6, (y - 8 if px != x else y - 20) - 6, px + 6, (y - 8 if px != x else y - 20) + 6), fill=GOLD)
 
 
 def _rows(image: Image.Image, entries: list[Entry], top: int) -> None:
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    odraw = ImageDraw.Draw(overlay)
-    for index, entry in enumerate(entries):
-        y = top + index * (ROW_HEIGHT + ROW_GAP)
-        accent = MEDALS.get(entry.rank)
-        odraw.rounded_rectangle(
-            (PAD, y, WIDTH - PAD, y + ROW_HEIGHT), radius=26,
-            fill=(255, 255, 255, 22), outline=(*accent, 160) if accent else (255, 255, 255, 40), width=2,
-        )
-        bar_left, bar_right = 590, WIDTH - PAD - 150
-        bar_y = y + ROW_HEIGHT / 2
-        odraw.rounded_rectangle((bar_left, bar_y - 9, bar_right, bar_y + 9), radius=9, fill=(255, 255, 255, 35))
-    image.alpha_composite(overlay)
-
     draw = ImageDraw.Draw(image)
+    bar_left, bar_right = 520, WIDTH - PAD - 124
     for index, entry in enumerate(entries):
         y = top + index * (ROW_HEIGHT + ROW_GAP)
         middle = y + ROW_HEIGHT / 2
-        _badge(draw, (PAD + 46, middle), 27, entry.rank)
-        _paste_avatar(image, entry, (PAD + 130, middle), 62, MEDALS.get(entry.rank, (255, 255, 255)))
-        name_font = _font("bold", 31)
-        draw.text((PAD + 182, middle - 14), _fit(draw, clean_name(entry.name), name_font, 330), font=name_font, fill=WHITE, anchor="lm")
-        draw.text((PAD + 182, middle + 22), f"record du {entry.date}", font=_font("regular", 21), fill=MUTED, anchor="lm")
-        bar_left, bar_right = 590, WIDTH - PAD - 150
-        fill_right = bar_left + (bar_right - bar_left) * entry.value / 100
+        _panel(draw, (PAD, y, WIDTH - PAD - 8, y + ROW_HEIGHT), radius=16, border=4, shadow=6)
+        _badge(draw, (PAD + 42, middle), 25, entry.rank)
+        _paste_avatar(image, entry, (PAD + 116, middle), 54, MEDALS.get(entry.rank, YELLOW))
+        name_font = _font("bold", 28)
+        name = _fit(draw, clean_name(entry.name), name_font, bar_left - PAD - 180)
+        draw.text((PAD + 160, middle - 13), name, font=name_font, fill=INK, anchor="lm")
+        draw.text((PAD + 160, middle + 19), entry.date, font=_font("regular", 19), fill=GREY, anchor="lm")
+        draw.rounded_rectangle((bar_left, middle - 11, bar_right, middle + 11), radius=11, fill=(238, 238, 238), outline=INK, width=3)
         if entry.value:
-            draw.rounded_rectangle((bar_left, middle - 9, max(fill_right, bar_left + 18), middle + 9), radius=9, fill=_bar_color(entry.value))
-        draw.text((WIDTH - PAD - 28, middle), f"{entry.value} %", font=_font("bold", 38), fill=WHITE, anchor="rm")
+            fill_right = max(bar_left + (bar_right - bar_left) * entry.value / 100, bar_left + 22)
+            draw.rounded_rectangle((bar_left, middle - 11, fill_right, middle + 11), radius=11,
+                                   fill=_bar_color(entry.value), outline=INK, width=3)
+        draw.text((WIDTH - PAD - 26, middle), f"{entry.value} %", font=_font("bold", 32), fill=INK, anchor="rm")
 
 
-def render_board(entries: list[Entry], page: int, pages: int, players: int, footer: str) -> bytes:
+def render_board(entries: list[Entry], page: int, pages: int, players: int) -> bytes:
     podium = [entry for entry in entries if entry.rank <= 3] if page == 1 else []
     rows = [entry for entry in entries if entry not in podium]
-    body_top = 270
-    height = body_top + (PODIUM_HEIGHT if podium else 0) + len(rows) * (ROW_HEIGHT + ROW_GAP) + 90
-    image = _background(height)
+    height = HEADER_HEIGHT + (PODIUM_HEIGHT if podium else 10) + len(rows) * (ROW_HEIGHT + ROW_GAP) + BOTTOM
+    image = _background(height).copy()
     _header(image, players, page, pages)
     if podium:
-        _podium(image, podium, body_top)
-    _rows(image, rows, body_top + (PODIUM_HEIGHT if podium else 0))
-    ImageDraw.Draw(image).text((WIDTH / 2, height - 45), footer, font=_font("regular", 22), fill=MUTED, anchor="mm")
+        _podium(image, podium, HEADER_HEIGHT)
+    _rows(image, rows, HEADER_HEIGHT + (PODIUM_HEIGHT if podium else 10))
 
     output = io.BytesIO()
-    image.convert("RGB").save(output, format="PNG", optimize=True)
+    image.save(output, format="JPEG", quality=85)
     return output.getvalue()

@@ -22,9 +22,6 @@ from aiogram.types import (
 from ..config import Config
 from ..db import Database, full_name
 from ..filters import IsMember
-from ..flocko_image import Entry, render_board
-from ..jokes import flocko_comment
-from ..targets import Target
 from ..utils import PREFIXES, format_duration, on_cooldown
 
 log = logging.getLogger(__name__)
@@ -33,41 +30,27 @@ router = Router(name="flocko")
 
 ROLL_EVERY = 12 * 3600
 PER_PAGE = 10
-AVATAR_TTL = 6 * 3600
-FOOTER = "/flocko : nouveau tirage toutes les 12 h  ·  le meilleur score de chacun compte"
+AVATAR_TTL = 24 * 3600
+AVATAR_WAIT = 2.0  # au-delà, on dessine l'initiale plutôt que d'attendre la photo
+
+# Image déjà envoyée pour un état donné du classement : on renvoie le même fichier, sans rien recalculer
+_sent_boards: dict[tuple, str] = {}
 
 _avatars: dict[int, tuple[float, bytes | None]] = {}
 
 
 @router.message(Command("flocko", prefix=PREFIXES, ignore_case=True), IsMember())
 async def cmd_flocko(message: Message, db: Database) -> None:
-    user = message.from_user
-    who = Target.from_user(user).mention
-    row = await db.get_flocko(user.id)
+    user_id = message.from_user.id
+    row = await db.get_flocko(user_id)
     now = int(time.time())
-
     if row and now - row["last_at"] < ROLL_EVERY:
         remaining = format_duration(ROLL_EVERY - (now - row["last_at"]))
-        rank = await db.flocko_rank(user.id)
-        await message.reply(
-            f"⏳ {who}, ton flocko du moment : <b>{row['last']} %</b>.\n"
-            f"Prochain tirage dans {remaining}. La science prend son temps.\n"
-            f"🏅 Ton record : {row['best']} % (#{rank} au <code>/topflocko</code>)"
-        )
+        await message.reply(f"🧪 <b>{row['last']} %</b> · ⏳ {remaining}")
         return
-
     value = random.randint(0, 100)
-    previous_best = row["best"] if row else -1
-    row = await db.save_flocko(user.id, value)
-    rank = await db.flocko_rank(user.id)
-    players = await db.flocko_players()
-    record = " — 🎉 <b>NOUVEAU RECORD !</b>" if value > previous_best and previous_best >= 0 else ""
-    await message.reply(
-        f"🧪 <b>Taux de flocko de {who}</b> : <b>{value} %</b>\n"
-        f"{flocko_comment(value)}\n\n"
-        f"🏅 Record : {row['best']} % — #{rank} sur {players}{record}\n"
-        "⏳ Prochain tirage dans 12 h."
-    )
+    await db.save_flocko(user_id, value)
+    await message.reply(f"🧪 <b>{value} %</b>")
 
 
 async def _avatar(bot: Bot, user_id: int) -> bytes | None:
@@ -100,14 +83,27 @@ def _keyboard(page: int, pages: int) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
-async def _board(page: int, bot: Bot, db: Database, cfg: Config) -> tuple[bytes, str, int] | None:
+async def _avatars_for(bot: Bot, user_ids: list[int]) -> list[bytes | None]:
+    tasks = [asyncio.ensure_future(_avatar(bot, user_id)) for user_id in user_ids]
+    await asyncio.wait(tasks, timeout=AVATAR_WAIT)  # les retardataires finissent en fond et rempliront le cache
+    return [task.result() if task.done() and not task.exception() else None for task in tasks]
+
+
+async def _board(page: int, bot: Bot, db: Database, cfg: Config) -> tuple[bytes | str, int, tuple] | None:
+    """Image de la page (ou file_id si cette page exacte a déjà été envoyée), nombre de pages, signature."""
     players = await db.flocko_players()
     if not players:
         return None
     pages = math.ceil(players / PER_PAGE)
     page = max(1, min(page, pages))
     rows = await db.flocko_board((page - 1) * PER_PAGE, PER_PAGE)
-    avatars = await asyncio.gather(*(_avatar(bot, row["user_id"]) for row in rows))
+    signature = (page, pages, players, *((r["user_id"], r["best"], r["first_name"], r["last_name"]) for r in rows))
+    if signature in _sent_boards:
+        return _sent_boards[signature], pages, signature
+
+    from ..flocko_image import Entry, render_board  # Pillow n'est chargé qu'au premier /topflocko
+
+    avatars = await _avatars_for(bot, [row["user_id"] for row in rows])
     entries = [
         Entry(
             rank=(page - 1) * PER_PAGE + index + 1,
@@ -119,12 +115,19 @@ async def _board(page: int, bot: Bot, db: Database, cfg: Config) -> tuple[bytes,
         )
         for index, (row, avatar) in enumerate(zip(rows, avatars))
     ]
-    png = await asyncio.to_thread(render_board, entries, page, pages, players, FOOTER)
-    caption = (
-        f"🏆 <b>Top flocko</b> — page {page}/{pages}\n"
-        "<i>Le meilleur score de chacun, depuis toujours. <code>/flocko</code> pour tenter ta chance.</i>"
-    )
-    return png, caption, pages
+    image = await asyncio.to_thread(render_board, entries, page, pages, players)
+    return image, pages, signature
+
+
+def _remember(signature: tuple, sent: Message | None) -> None:
+    if isinstance(sent, Message) and sent.photo:
+        if len(_sent_boards) > 100:
+            _sent_boards.clear()
+        _sent_boards[signature] = sent.photo[-1].file_id
+
+
+def _photo(image: bytes | str, page: int) -> BufferedInputFile | str:
+    return image if isinstance(image, str) else BufferedInputFile(image, f"topflocko-{page}.jpg")
 
 
 @router.message(Command("topflocko", "flockotop", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -133,12 +136,11 @@ async def cmd_topflocko(message: Message, bot: Bot, db: Database, cfg: Config) -
         return
     board = await _board(1, bot, db, cfg)
     if board is None:
-        await message.reply("🏆 Personne n'a encore joué. Lance <code>/flocko</code> et deviens une légende.")
+        await message.reply("🏆 Personne n'a encore joué.")
         return
-    png, caption, pages = board
-    await message.reply_photo(
-        BufferedInputFile(png, "topflocko.png"), caption=caption, reply_markup=_keyboard(1, pages)
-    )
+    image, pages, signature = board
+    sent = await message.reply_photo(_photo(image, 1), reply_markup=_keyboard(1, pages))
+    _remember(signature, sent)
 
 
 @router.callback_query(F.data.startswith("flocko:"))
@@ -148,19 +150,19 @@ async def on_page(callback: CallbackQuery, bot: Bot, db: Database, cfg: Config) 
         await callback.answer()
         return
     if on_cooldown(f"flockopage:{callback.message.message_id}", 1.5):
-        await callback.answer("Doucement, l'imprimante chauffe. 🖨")
+        await callback.answer()
         return
     board = await _board(int(target), bot, db, cfg)
     if board is None:
         await callback.answer()
         return
-    png, caption, pages = board
+    image, pages, signature = board
     page = max(1, min(int(target), pages))
     try:
-        await callback.message.edit_media(
-            InputMediaPhoto(media=BufferedInputFile(png, f"topflocko-{page}.png"), caption=caption),
-            reply_markup=_keyboard(page, pages),
+        edited = await callback.message.edit_media(
+            InputMediaPhoto(media=_photo(image, page)), reply_markup=_keyboard(page, pages)
         )
+        _remember(signature, edited)
     except TelegramBadRequest as exc:
         if "not modified" not in exc.message:
             raise

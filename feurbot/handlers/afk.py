@@ -29,7 +29,7 @@ async def _go_afk(message: Message, reason: str | None, db: Database) -> None:
     await db.set_afk(message.from_user.id, reason)
     who = Target.from_user(message.from_user).mention
     suffix = f" : {escape(reason)}" if reason else ""
-    await message.reply(f"💤 {who} est AFK{suffix}.\n<i>On garde ta place au chaud. Enfin, on essaie.</i>")
+    await message.reply(f"💤 {who} est AFK{suffix}")
 
 
 @router.message(Command("afk", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -52,8 +52,7 @@ async def check(message: Message, bot: Bot, db: Database, cfg: Config) -> None:
     back = await db.clear_afk(user.id)
     if back:
         await message.reply(
-            f"👋 Re {Target.from_user(user).mention} ! T'étais AFK depuis {_since(back)}.\n"
-            "<i>On n'a pas trop parlé de toi, promis.</i>"
+            f"👋 Re {Target.from_user(user).mention} ({_since(back)})"
         )
 
     mentioned: set[int] = set()
@@ -77,6 +76,5 @@ async def check(message: Message, bot: Bot, db: Database, cfg: Config) -> None:
         name = full_name(known["first_name"], known["last_name"]) if known else str(user_id)
         reason = f" : {escape(row['reason'])}" if row["reason"] else ""
         await message.reply(
-            f"💤 {mention(user_id, name)} est AFK depuis {_since(row)}{reason}.\n"
-            "<i>Laisse un message après le bip. Biiip.</i>"
+            f"💤 {mention(user_id, name)} est AFK depuis {_since(row)}{reason}"
         )

@@ -9,7 +9,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from ..config import Config
-from ..content import PLACEHOLDERS, extract_media, html_args, render, send_content
+from ..content import extract_media, html_args, render, send_content
 from ..db import Database
 from ..filters import IsAdmin, IsMember
 from ..utils import PREFIXES
@@ -69,17 +69,15 @@ async def cmd_save(message: Message, command: CommandObject, db: Database) -> No
     name, skip = _parse_name(command.args or "")
     if not name or not NOTE_NAME.fullmatch(name):
         await message.reply(
-            "Usage : <code>.save nom texte</code>, ou <code>.save nom</code> en réponse à un message / média.\n"
-            "Nom : lettres, chiffres, <code>_</code> et <code>-</code>. Pas d'espace, on n'est pas des sauvages.\n"
-            f"Variables : <code>{PLACEHOLDERS}</code>"
+            "Usage : <code>/save nom texte</code> (ou en réponse)"
         )
         return
     text, media_type, file_id = _content(message, skip)
     if not text and not media_type:
-        await message.reply("❌ Une note vide ? Même mes blagues ont plus de contenu.")
+        await message.reply("❌ Note vide.")
         return
     await db.save_snippet("note", name, text, media_type, file_id, message.from_user.id)
-    await message.reply(f"📝 Note <code>#{escape(name)}</code> enregistrée. Tape <code>#{escape(name)}</code> pour la ressortir.")
+    await message.reply(f"📝 <code>#{escape(name)}</code> enregistrée")
 
 
 @router.message(Command("get", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -87,7 +85,7 @@ async def cmd_get(message: Message, command: CommandObject, bot: Bot, db: Databa
     name, _ = _parse_name(command.args or "")
     row = await db.get_snippet("note", name.lstrip("#")) if name else None
     if row is None:
-        await message.reply("❌ Note introuvable. Regarde la liste avec <code>.notes</code>.")
+        await message.reply("❌ Note introuvable.")
         return
     await send_snippet(message, row, bot, cfg)
 
@@ -96,19 +94,19 @@ async def cmd_get(message: Message, command: CommandObject, bot: Bot, db: Databa
 async def cmd_notes(message: Message, db: Database) -> None:
     rows = await db.list_snippets("note")
     if not rows:
-        await message.reply("📭 Aucune note. Le vide intersidéral.")
+        await message.reply("📭 Aucune note.")
         return
     names = " ".join(f"<code>#{escape(row['name'])}</code>" for row in rows)
-    await message.reply(f"<b>📒 Notes ({len(rows)})</b>\n{names}\n\nTape le #nom pour en afficher une.")
+    await message.reply(f"<b>📒 Notes</b>\n{names}")
 
 
 @router.message(Command("clear", "delnote", prefix=PREFIXES, ignore_case=True), IsAdmin())
 async def cmd_clear(message: Message, command: CommandObject, db: Database) -> None:
     name, _ = _parse_name(command.args or "")
     if name and await db.delete_snippet("note", name.lstrip("#")):
-        await message.reply(f"🗑 Note <code>#{escape(name.lstrip('#'))}</code> supprimée. Paix à son âme.")
+        await message.reply(f"🗑 <code>#{escape(name.lstrip('#'))}</code> supprimée")
     else:
-        await message.reply("❌ Note introuvable. Difficile de supprimer ce qui n'existe pas.")
+        await message.reply("❌ Note introuvable.")
 
 
 # --- Filtres ---
@@ -120,31 +118,30 @@ async def cmd_filter(message: Message, command: CommandObject, db: Database) -> 
     text, media_type, file_id = _content(message, skip) if trigger else (None, None, None)
     if not trigger or (not text and not media_type):
         await message.reply(
-            "Usage : <code>.filter mot réponse</code> ou <code>.filter \"plusieurs mots\" réponse</code>, "
-            "ou en réponse à un message / média.\nQuand quelqu'un écrit le mot, je réponds. Comme pour « quoi ». 😏"
+            "Usage : <code>/filter mot réponse</code> (ou en réponse)"
         )
         return
     await db.save_snippet("filter", trigger, text, media_type, file_id, message.from_user.id)
-    await message.reply(f"✅ Filtre « {escape(trigger)} » enregistré. Je guette.")
+    await message.reply(f"✅ Filtre « {escape(trigger)} » enregistré")
 
 
 @router.message(Command("filters", "filtres", prefix=PREFIXES, ignore_case=True), IsMember())
 async def cmd_filters(message: Message, db: Database) -> None:
     rows = await db.list_snippets("filter")
     if not rows:
-        await message.reply("📭 Aucun filtre. À part « quoi → feur », mais celui-là est gravé dans le marbre.")
+        await message.reply("📭 Aucun filtre.")
         return
     names = "\n".join(f"• <code>{escape(row['name'])}</code>" for row in rows)
-    await message.reply(f"<b>🎯 Filtres ({len(rows)})</b>\n{names}")
+    await message.reply(f"<b>🎯 Filtres</b>\n{names}")
 
 
 @router.message(Command("stop", "delfilter", prefix=PREFIXES, ignore_case=True), IsAdmin())
 async def cmd_stop(message: Message, command: CommandObject, db: Database) -> None:
     trigger, _ = _parse_name(command.args or "")
     if trigger and await db.delete_snippet("filter", trigger):
-        await message.reply(f"🗑 Filtre « {escape(trigger)} » supprimé. Je ne guette plus.")
+        await message.reply(f"🗑 Filtre « {escape(trigger)} » supprimé")
     else:
-        await message.reply("❌ Filtre introuvable. Liste : <code>.filters</code>")
+        await message.reply("❌ Filtre introuvable.")
 
 
 # --- Règles ---
@@ -154,21 +151,21 @@ async def cmd_stop(message: Message, command: CommandObject, db: Database) -> No
 async def cmd_setrules(message: Message, bot: Bot, db: Database, cfg: Config) -> None:
     text, media_type, file_id = _content(message, 1)
     if not text and not media_type:
-        await message.reply("Usage : <code>.setrules texte des règles</code> (ou en réponse à un message).")
+        await message.reply("Usage : <code>/setrules texte</code> (ou en réponse)")
         return
     try:
         await send_content(bot, message.chat.id, text, media_type, file_id)
     except TelegramBadRequest as exc:
-        await message.reply(f"❌ Telegram n'en veut pas : {escape(exc.message)}")
+        await message.reply(f"❌ Telegram : {escape(exc.message)}")
         return
     await db.save_snippet(*RULES, text, media_type, file_id, message.from_user.id)
-    await message.reply("✅ Règles enregistrées ☝️ Maintenant plus personne ne pourra dire qu'il savait pas.")
+    await message.reply("✅ Règles enregistrées ☝️")
 
 
 @router.message(Command("rules", "regles", "règles", prefix=PREFIXES, ignore_case=True), IsMember())
 async def cmd_rules(message: Message, bot: Bot, db: Database, cfg: Config) -> None:
     row = await db.get_snippet(*RULES)
     if row is None:
-        await message.reply("📜 Pas de règles. C'est l'anarchie. Enfin presque : PUB = MUTE.")
+        await message.reply("📜 Pas de règles.")
         return
     await send_snippet(message, row, bot, cfg)

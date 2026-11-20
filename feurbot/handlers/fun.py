@@ -14,9 +14,7 @@ from ..config import Config
 from ..db import Database, full_name
 from ..filters import IsAdmin, IsMember
 from ..jokes import (
-    COUPLE_QUIPS,
     EIGHTBALL,
-    ELU_QUIPS,
     HACK_RESULTS,
     HACK_STEPS,
     INSULT_ADJECTIVES,
@@ -25,7 +23,7 @@ from ..jokes import (
     iq_comment,
     love_comment,
 )
-from ..targets import Target, resolve_target
+from ..targets import Target, reply_error, resolve_target
 from ..utils import PREFIXES, mention, on_cooldown
 
 router = Router(name="fun")
@@ -50,7 +48,7 @@ async def cmd_coin(message: Message) -> None:
     if _spam(message):
         return
     if random.random() < 0.03:
-        await message.reply("🪙 La pièce est retombée sur la tranche. C'est un signe. Ou un bug.")
+        await message.reply("🪙 Tranche !")
     else:
         await message.reply(f"🪙 {random.choice(['Pile', 'Face'])} !")
 
@@ -66,7 +64,7 @@ async def cmd_boule(message: Message, command: CommandObject) -> None:
     if _spam(message):
         return
     if not (command.args or "").strip():
-        await message.reply("🎱 Faut poser une question, champion. <code>.boule je vais être admin ?</code>")
+        await message.reply("🎱 Pose une question.")
         return
     await message.reply(f"🎱 {random.choice(EIGHTBALL)}")
 
@@ -74,7 +72,7 @@ async def cmd_boule(message: Message, command: CommandObject) -> None:
 @router.message(Command("quoi", prefix=PREFIXES, ignore_case=True), IsMember())
 async def cmd_quoi(message: Message) -> None:
     if not _spam(message):
-        await message.reply("feur. Évidemment.")
+        await message.reply("feur.")
 
 
 @router.message(Command("feur", prefix=PREFIXES, ignore_case=True), IsAdmin())
@@ -83,17 +81,11 @@ async def cmd_feur(message: Message, command: CommandObject, db: Database) -> No
     if arg in ("on", "off"):
         await db.set_setting("feur", arg == "on")
         await message.reply(
-            "✅ Réponses « quoi → feur » activées. Que la chasse commence. 😈"
-            if arg == "on"
-            else "⛔️ Réponses « feur » désactivées. Triste époque."
+            "✅ Feur activé" if arg == "on" else "⛔️ Feur désactivé"
         )
         return
     state = "activées ✅" if await db.get_setting("feur", True) else "désactivées ⛔️"
-    await message.reply(
-        f"Réponses automatiques « quoi → feur » : {state}\n"
-        "<code>.feur on</code> / <code>.feur off</code>\n"
-        "<i>Je réponds aussi à oui (stiti), non (bril), hein (deux), comment (dant)… une fois sur deux.</i>"
-    )
+    await message.reply(f"Feur : {state}")
 
 
 # --- Tirages du jour ---
@@ -128,10 +120,10 @@ async def cmd_couple(message: Message, db: Database) -> None:
         return
     ids = await _daily_pick(db, "couple", 2)
     if ids is None:
-        await message.reply("💔 Pas assez de monde actif pour former un couple. Parlez un peu, timides.")
+        await message.reply("💔 Pas assez de monde actif.")
         return
     a, b = [await _mention_id(db, user_id) for user_id in ids]
-    await message.reply(f"💘 <b>Couple du jour</b>\n{a} ❤️ {b}\n\n<i>{random.choice(COUPLE_QUIPS)}</i>")
+    await message.reply(f"💘 {a} ❤️ {b}")
 
 
 @router.message(Command("elu", "élu", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -140,10 +132,10 @@ async def cmd_elu(message: Message, db: Database) -> None:
         return
     ids = await _daily_pick(db, "elu", 1)
     if ids is None:
-        await message.reply("👑 Personne à élire. Le trône reste vide, comme vos conversations.")
+        await message.reply("👑 Personne à élire.")
         return
     await message.reply(
-        f"👑 <b>Le boloss du jour</b> est… {await _mention_id(db, ids[0])} !\n\n<i>{random.choice(ELU_QUIPS)}</i>"
+        f"👑 Boloss du jour : {await _mention_id(db, ids[0])}"
     )
 
 
@@ -154,12 +146,12 @@ async def cmd_love(message: Message, command: CommandObject, bot: Bot, db: Datab
     first, rest, error = await resolve_target(message, command.args or "", bot, db, cfg)
     second, _, error2 = await resolve_target(message, rest, bot, db, cfg) if first and rest.strip() else (None, "", None)
     if error or error2 or first is None:
-        await message.reply(error or error2 or "💘 Usage : <code>.love @a @b</code>, ou <code>.love @pseudo</code> pour toi et lui.")
+        await reply_error(message, error or error2, "Usage : <code>/love @a @b</code>")
         return
     if second is None:
         first, second = Target.from_user(message.from_user), first
     if first.id == second.id:
-        await message.reply(f"🪞 {first.mention} + {second.mention} : 100 %. L'amour-propre, c'est important.")
+        await message.reply(f"🪞 {first.mention} : 100 %")
         return
     score = _daily_score(db, *sorted((first.id, second.id)), modulo=101)
     await message.reply(f"💘 {first.mention} + {second.mention} : <b>{score} %</b>\n{love_comment(score)}")
@@ -171,14 +163,14 @@ async def cmd_qi(message: Message, command: CommandObject, bot: Bot, db: Databas
         return
     target, _, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error:
-        await message.reply(error)
+        await reply_error(message, error)
         return
     target = target or Target.from_user(message.from_user)
     if target.id == bot.id:
-        await message.reply("🧠 Mon QI : 9000. Évidemment. Question suivante.")
+        await message.reply("🧠 9000.")
         return
     score = _daily_score(db, target.id, modulo=200)
-    await message.reply(f"🧠 QI de {target.mention} aujourd'hui : <b>{score}</b>\n{iq_comment(score)}")
+    await message.reply(f"🧠 {target.mention} : <b>{score}</b> — {iq_comment(score)}")
 
 
 @router.message(Command("hack", "pirater", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -187,10 +179,10 @@ async def cmd_hack(message: Message, command: CommandObject, bot: Bot, db: Datab
         return
     target, _, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error or target is None:
-        await message.reply(error or "💻 Usage : <code>.hack @pseudo</code> ou en réponse à ta victime.")
+        await reply_error(message, error, "Usage : <code>/hack @pseudo</code>")
         return
     if target.id == bot.id:
-        await message.reply("💻 Me pirater ? Je tourne sur un serveur à 2 €. Y a rien à voler.")
+        await message.reply("💻 Rien à voler ici.")
         return
     sent = await message.reply(HACK_STEPS[0].format(name=escape(target.name)))
     for step in HACK_STEPS[1:]:
@@ -199,7 +191,7 @@ async def cmd_hack(message: Message, command: CommandObject, bot: Bot, db: Datab
     await asyncio.sleep(HACK_DELAY)
     found = "\n".join(f"• {line}" for line in random.sample(HACK_RESULTS, 2))
     await sent.edit_text(
-        f"✅ <b>Piratage de {target.mention} terminé.</b>\n{found}\n\n<i>Données revendues 2 € sur le dark web. Feur.</i>"
+        f"✅ {target.mention} piraté\n{found}"
     )
 
 
@@ -209,14 +201,13 @@ async def cmd_clash(message: Message, command: CommandObject, bot: Bot, db: Data
         return
     target, _, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error or target is None:
-        await message.reply(error or "⚔️ Usage : <code>.clash @pseudo</code> ou en réponse. Je fournis les munitions.")
+        await reply_error(message, error, "Usage : <code>/clash @pseudo</code>")
         return
     if target.id == bot.id:
-        await message.reply("⚔️ Tu veux me clasher ? Espèce de… non, je suis au-dessus de ça. Paltoquet.")
+        await message.reply("⚔️ Paltoquet.")
         return
     insult = f"{random.choice(INSULT_NOUNS)} {random.choice(INSULT_ADJECTIVES)}"
-    bonus = " Et en plus tu dis « quoi »." if random.random() < 0.3 else ""
-    await message.reply(f"⚔️ {target.mention}, espèce de <b>{insult}</b> !{bonus}")
+    await message.reply(f"⚔️ {target.mention}, espèce de <b>{insult}</b> !")
 
 
 @router.message(Command("moqueur", "mock", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -224,7 +215,7 @@ async def cmd_moqueur(message: Message) -> None:
     reply = message.reply_to_message
     original = (reply.text or reply.caption) if reply and message.chat.type != ChatType.PRIVATE else None
     if not original:
-        await message.reply("🧽 Réponds au message à imiter. Je ne vais pas me moquer du vide.")
+        await message.reply("🧽 Réponds au message à imiter.")
         return
     if _spam(message):
         return

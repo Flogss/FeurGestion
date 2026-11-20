@@ -1,8 +1,10 @@
 import asyncio
 import logging
 
+import orjson
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
 from . import deezer
@@ -42,7 +44,13 @@ async def main() -> None:
     db = Database(cfg.db_path, cfg.tz)
     await db.connect()
 
-    bot = Bot(cfg.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
+    # orjson : lecture et écriture JSON bien plus rapides pour chaque échange avec Telegram
+    session = AiohttpSession(json_loads=orjson.loads, json_dumps=lambda value: orjson.dumps(value).decode())
+    bot = Bot(
+        cfg.token,
+        session=session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True),
+    )
     dp = build_dispatcher(cfg, db)
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
@@ -55,4 +63,9 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        import uvloop  # boucle d'événements plus rapide (Linux / macOS)
+    except ImportError:
+        asyncio.run(main())
+    else:
+        uvloop.run(main())

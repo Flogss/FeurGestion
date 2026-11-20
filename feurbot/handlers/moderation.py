@@ -17,7 +17,7 @@ from aiogram.types import (
 from ..config import Config
 from ..db import Database
 from ..filters import IsStaff, is_staff
-from ..targets import Target, resolve_target
+from ..targets import Target, reply_error, resolve_target
 from ..jokes import quip
 from ..utils import (
     ACTION_LABELS,
@@ -63,14 +63,14 @@ async def check_target(
     action: str, target: Target, admin_id: int, bot: Bot, cfg: Config, db: Database
 ) -> str | None:
     if target.id == bot.id:
-        return "🙃 Me sanctionner, moi ? Je suis intouchable. Comme le « feur » après un « quoi »."
+        return "🙃 Me sanctionner, moi ? Jamais."
     if action in PUNISHMENTS:
         if target.id == admin_id:
-            return "🙃 Te sanctionner toi-même ? Va voir un psy, pas un bot."
+            return "🙃 Te sanctionner toi-même ?"
         if target.id in cfg.admin_ids:
-            return "❌ C'est un admin du bot. Entre collègues, on se respecte."
+            return "❌ C'est un admin du bot."
         if admin_id not in cfg.admin_ids and await db.is_mod(target.id):
-            return "❌ C'est un modo, comme toi. Pas de guerre civile : demande à un admin."
+            return "❌ C'est un modo, demande à un admin."
 
     try:
         member = await bot.get_chat_member(cfg.chat_id, target.id)
@@ -78,13 +78,13 @@ async def check_target(
         return None  # Telegram ne le connaît pas dans ce groupe : on tente quand même
 
     if action in PUNISHMENTS and member.status in (ChatMemberStatus.CREATOR, ChatMemberStatus.ADMINISTRATOR):
-        return "❌ Impossible, c'est un admin du groupe. Même moi j'ai pas ce pouvoir."
+        return "❌ C'est un admin du groupe."
     if action == "kick" and not in_chat(member):
-        return "ℹ️ Il n'est même pas dans le groupe. Tu tapes dans le vide."
+        return "ℹ️ Pas dans le groupe."
     if action == "unban" and member.status != ChatMemberStatus.KICKED:
-        return "ℹ️ Il n'est pas banni. Le débannir de quoi ? (feur)"
+        return "ℹ️ Pas banni."
     if action == "unmute" and not (member.status == ChatMemberStatus.RESTRICTED and not member.can_send_messages):
-        return "ℹ️ Il n'est pas mute. Il parle déjà assez, laisse-le."
+        return "ℹ️ Pas mute."
     return None
 
 
@@ -114,12 +114,11 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
     action = ALIASES.get(command.command.lower(), command.command.lower())
     target, rest, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error:
-        await message.reply(error)
+        await reply_error(message, error)
         return
     if target is None:
         await message.reply(
-            f"Usage : <code>{escape(USAGE[action])}</code>\n"
-            "Ou réponds à un message de la personne. Je suis bon, mais pas devin."
+            f"Usage : <code>{escape(USAGE[action])}</code>"
         )
         return
 
@@ -128,8 +127,7 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
         duration, rest = split_duration(rest)
         if duration is not None and not MIN_DURATION <= duration <= MAX_DURATION:
             await message.reply(
-                "❌ La durée doit être entre 30s et 366j (sans durée = définitif). "
-                "C'est pas moi qui ai fait les règles, c'est Telegram."
+                "❌ Durée : entre 30s et 366j."
             )
             return
     reason = rest.strip() or None
@@ -145,18 +143,22 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
         await apply_sanction(action, target.id, until, bot, cfg)
     except TelegramAPIError as exc:
         log.warning("%s de %s refusé : %s", action, target.id, exc)
-        await message.reply(f"❌ Telegram a refusé : {escape(exc.message)} (c'est pas moi, c'est lui)")
+        await message.reply(f"❌ Telegram : {escape(exc.message)}")
         return
 
     action_id = await db.add_action(action, target.id, admin.id, reason, duration, until)
     log.info("%s %s par %s (durée=%s, raison=%s)", action, target.id, admin.id, duration, reason)
 
+    # Message du groupe : l'essentiel. Le log privé garde tout (ID, date de fin, lien, preuve).
+    headline = f"<b>{ACTION_LABELS[action]}</b>"
+    if action in TIMED:
+        headline += f" · {format_duration(duration)}"
     details = [f"👤 {target.label}"]
     if action in TIMED:
         end = f" (jusqu'au {format_date(until, cfg)})" if until else ""
-        details.append(f"⏱ Durée : {format_duration(duration)}{end}")
-    if action in PUNISHMENTS:
-        details.append(f"📝 Raison : {escape(reason) if reason else 'aucune'}")
+        details.append(f"⏱ {format_duration(duration)}{end}")
+    if reason:
+        details.append(f"📝 {escape(reason)}")
 
     in_group = message.chat.type != ChatType.PRIVATE
     reply = message.reply_to_message if in_group else None
@@ -179,7 +181,10 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
         log_lines.append("⬇️ Message visé :")
     await send_log(bot, cfg, "\n".join(log_lines), evidence=(cfg.chat_id, reply.message_id) if reply else None)
 
-    text = f"<b>{ACTION_LABELS[action]}</b>\n" + "\n".join(details) + f"\n\n<i>{quip(action)}</i>"
+    lines = [f"{headline} — {target.mention}"]
+    if reason:
+        lines.append(f"📝 {escape(reason)}")
+    text = "\n".join(lines) + f"\n<i>{quip(action)}</i>"
     markup = undo_keyboard(action_id) if action in UNDO else None
     if to_delete:
         try:
@@ -195,29 +200,26 @@ async def cmd_sanction(message: Message, command: CommandObject, bot: Bot, db: D
 async def on_undo(callback: CallbackQuery, bot: Bot, db: Database, cfg: Config) -> None:
     admin = callback.from_user
     if not await is_staff(admin.id, cfg, db):
-        await callback.answer("⛔️ Pas touche, c'est réservé aux admins et aux modos.", show_alert=True)
+        await callback.answer("⛔️ Réservé à l'équipe.", show_alert=True)
         return
 
     row = await db.get_action(int(callback.data.removeprefix("undo:")))
     if row is None or row["action"] not in UNDO:
-        await callback.answer("❌ Sanction introuvable. Elle s'est sauvée ?", show_alert=True)
+        await callback.answer("❌ Introuvable.", show_alert=True)
         return
 
     undo = UNDO[row["action"]]
     try:
         await apply_sanction(undo, row["user_id"], None, bot, cfg)
     except TelegramAPIError as exc:
-        await callback.answer(f"❌ Telegram a refusé : {exc.message}", show_alert=True)
+        await callback.answer(f"❌ Telegram : {exc.message}", show_alert=True)
         return
 
     await db.add_action(undo, row["user_id"], admin.id, f"annulation du {row['action']} #{row['id']}")
     log.info("%s #%s annulé par %s", row["action"], row["id"], admin.id)
     await callback.answer("✅ Annulé")
 
-    note = f"↩️ <b>Annulé</b> par {Target.from_user(admin).mention}"
-    if row["action"] == "ban":
-        note += " — il peut revenir avec un lien"
-    note += f"\n<i>{quip('undo')}</i>"
+    note = f"↩️ Annulé par {Target.from_user(admin).mention}"
     if isinstance(callback.message, Message):
         await callback.message.edit_text(f"{callback.message.html_text}\n\n{note}", reply_markup=None)
 

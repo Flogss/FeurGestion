@@ -27,7 +27,7 @@ async def report(message: Message, bot: Bot, cfg: Config) -> None:
     if message.chat.id != cfg.chat_id:
         return
     if reply is None:
-        await message.reply("🚨 Réponds au message à signaler. Je suis un bot, pas un médium.")
+        await message.reply("🚨 Réponds au message à signaler.")
         return
     if on_cooldown(f"report:{message.from_user.id}", 60):
         return
@@ -41,7 +41,7 @@ async def report(message: Message, bot: Bot, cfg: Config) -> None:
         "⬇️ Message signalé :",
     ]
     await send_log(bot, cfg, "\n".join(lines), evidence=(cfg.chat_id, reply.message_id))
-    await message.reply("🚨 Signalé aux admins. Ils arrivent… dès qu'ils auront fini leur sieste.")
+    await message.reply("🚨 Signalé aux admins.")
 
 
 @router.message(Command("report", "signaler", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -53,7 +53,7 @@ async def cmd_report(message: Message, bot: Bot, cfg: Config) -> None:
 async def cmd_purge(message: Message, bot: Bot, cfg: Config) -> None:
     reply = message.reply_to_message
     if message.chat.type == ChatType.PRIVATE or reply is None:
-        await message.reply("🧹 Réponds au premier message à effacer : je supprime tout jusqu'à ta commande.")
+        await message.reply("🧹 Réponds au premier message à effacer.")
         return
     first = max(reply.message_id, message.message_id - PURGE_MAX + 1)
     ids = list(range(first, message.message_id + 1))
@@ -64,7 +64,7 @@ async def cmd_purge(message: Message, bot: Bot, cfg: Config) -> None:
             log.warning("Purge partielle : %s", exc)
     log.info("Purge de %s messages par %s", len(ids), message.from_user.id)
     notice = await bot.send_message(
-        message.chat.id, f"🧹 {len(ids) - 1} messages balayés. Le ménage est fait, ça fera 15 € de l'heure."
+        message.chat.id, f"🧹 {len(ids) - 1} messages supprimés."
     )
     delete_later(bot, notice.chat.id, notice.message_id, 8)
 
@@ -85,7 +85,7 @@ async def cmd_del(message: Message, bot: Bot) -> None:
 async def cmd_pin(message: Message, command: CommandObject, bot: Bot) -> None:
     reply = message.reply_to_message
     if message.chat.type == ChatType.PRIVATE or reply is None:
-        await message.reply("📌 Réponds au message à épingler. (<code>.pin silence</code> pour ne pas notifier)")
+        await message.reply("📌 Réponds au message à épingler.")
         return
     silent = (command.args or "").strip().lower() in ("silence", "silent", "chut")
     try:
@@ -93,7 +93,7 @@ async def cmd_pin(message: Message, command: CommandObject, bot: Bot) -> None:
     except TelegramAPIError as exc:
         await message.reply(f"❌ Impossible : {exc.message}")
         return
-    await message.reply("📌 Épinglé. Lisez-le, sinon à quoi bon. (feur)")
+    await message.reply("📌 Épinglé.")
 
 
 @router.message(Command("unpin", "desepingle", prefix=PREFIXES, ignore_case=True), IsStaff())
@@ -104,7 +104,7 @@ async def cmd_unpin(message: Message, bot: Bot) -> None:
     except TelegramAPIError as exc:
         await message.reply(f"❌ Impossible : {exc.message}")
         return
-    await message.reply("📍 Désépinglé. Retour à l'anonymat.")
+    await message.reply("📍 Désépinglé.")
 
 
 @router.message(Command("id", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -116,7 +116,6 @@ async def cmd_id(message: Message) -> None:
     lines.append(f"🆔 Toi : <code>{message.from_user.id}</code>")
     if message.chat.type != ChatType.PRIVATE:
         lines.append(f"🆔 Ce groupe : <code>{message.chat.id}</code>")
-    lines.append("<i>Ne le tatoue pas, c'est pas si important.</i>")
     await message.reply("\n".join(lines))
 
 
@@ -125,4 +124,4 @@ async def cmd_ping(message: Message) -> None:
     start = time.monotonic()
     sent = await message.reply("🏓 Pong…")
     elapsed = (time.monotonic() - start) * 1000
-    await sent.edit_text(f"🏓 Pong ! {elapsed:.0f} ms.\n<i>Et si t'avais dit « quoi », j'aurais dit « feur ».</i>")
+    await sent.edit_text(f"🏓 {elapsed:.0f} ms")

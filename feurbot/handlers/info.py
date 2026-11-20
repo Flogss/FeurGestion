@@ -9,7 +9,7 @@ from aiogram.types import Message
 from ..config import Config
 from ..db import Database, full_name
 from ..filters import IsAdmin, IsStaff
-from ..targets import Target, resolve_target
+from ..targets import Target, reply_error, resolve_target
 from ..utils import (
     ACTION_LABELS,
     PREFIXES,
@@ -91,12 +91,12 @@ def _period_lines(periods, render, cfg: Config) -> list[str]:
 async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Database, cfg: Config) -> None:
     target, _, error = await resolve_target(message, command.args or "", bot, db, cfg)
     if error:
-        await message.reply(error)
+        await reply_error(message, error)
         return
     if target is None:
         target = Target.from_user(message.from_user)
 
-    status = "❔ Inconnu au bataillon (jamais vu dans le groupe)"
+    status = "❔ Inconnu"
     is_bot = False
     try:
         member = await bot.get_chat_member(cfg.chat_id, target.id)
@@ -130,7 +130,7 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
     lines += [
         f"Statut : {status}",
         "",
-        "<b>📊 Activité</b> <i>(depuis mon arrivée)</i>",
+        "<b>📊 Activité</b>",
         f"Vu la 1re fois : {format_date(row['first_seen'], cfg) if row else '—'}",
         f"Dernier message : {format_date(row['last_seen'], cfg) if row else '—'}",
         f"Messages : {row['message_count'] if row else 0}",
@@ -140,13 +140,11 @@ async def cmd_info(message: Message, command: CommandObject, bot: Bot, db: Datab
         f"🔨 Bans : {counts.get('ban', 0)} · 🔇 Mutes : {counts.get('mute', 0)} · 👢 Kicks : {counts.get('kick', 0)}",
         f"⚠️ Warns en cours : {warns} (total reçus : {counts.get('warn', 0)})",
     ]
-    if not history:
-        lines.append("<i>Casier vierge. Suspect, non ?</i>")
     if history:
-        lines += ["", "<b>🕓 Historique</b> <i>(10 derniers)</i>"]
+        lines += ["", "<b>🕓 Historique</b>"]
         lines += ["• " + " — ".join(_entry(entry, cfg, admins)) for entry in history]
     if names:
-        lines += ["", "<b>📝 Historique des pseudos</b> <i>(depuis mon arrivée)</i>"]
+        lines += ["", "<b>📝 Historique des pseudos</b>"]
         lines += _period_lines(
             _periods(names, "username"), lambda u: f"@{escape(u)}" if u else "<i>sans pseudo</i>", cfg
         )
@@ -165,11 +163,11 @@ async def cmd_logs(message: Message, command: CommandObject, db: Database, cfg: 
     limit = max(1, min(int(arg), 100)) if arg.isdigit() else 15
     rows = await db.recent_sanctions(limit)
     if not rows:
-        await message.reply("📭 Aucune sanction pour l'instant. Soit le groupe est sage, soit les admins dorment.")
+        await message.reply("📭 Aucune sanction.")
         return
 
     admins = await _admin_names(db, rows)
-    lines = [f"<b>📜 {len(rows)} dernières sanctions</b>"]
+    lines = ["<b>📜 Dernières sanctions</b>"]
     for row in rows:
         who = mention(row["user_id"], full_name(row["first_name"], row["last_name"]) if row["first_name"] else str(row["user_id"]))
         entry = _entry(row, cfg, admins)
@@ -186,12 +184,10 @@ async def cmd_sangmata(message: Message, command: CommandObject, db: Database) -
     if arg in ("on", "off"):
         await db.set_setting("sangmata", arg == "on")
         await message.reply(
-            "🕵️ Activé : j'annoncerai dans le groupe chaque changement de pseudo ou de nom. Personne ne m'échappe."
-            if arg == "on"
-            else "🙈 Désactivé : je note toujours les changements (visibles dans <code>.info</code>), mais en silence."
+            "🕵️ Annonces de pseudo activées" if arg == "on" else "🙈 Annonces de pseudo désactivées"
         )
         return
     state = "activées ✅" if await db.get_setting("sangmata", False) else "désactivées ⛔️"
     await message.reply(
-        f"Annonces de changement de pseudo : {state}\n<code>.sangmata on</code> / <code>.sangmata off</code>"
+        f"🕵️ Annonces de pseudo : {state}"
     )

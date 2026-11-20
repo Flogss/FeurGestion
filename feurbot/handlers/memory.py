@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import random
 from datetime import date, datetime, timedelta
 from html import escape
 
@@ -15,8 +14,8 @@ from aiogram.types import Message
 from ..config import Config
 from ..db import Database, full_name
 from ..filters import IsMember, IsStaff
-from ..jokes import BIRTHDAY_LINES, MONTHS, TOP_TITLES, feur_title
-from ..targets import resolve_target
+from ..jokes import MONTHS, TOP_TITLES, feur_title
+from ..targets import reply_error, resolve_target
 from ..utils import PREFIXES, mention, on_cooldown
 
 log = logging.getLogger(__name__)
@@ -36,15 +35,13 @@ def _who(row) -> str:
 async def cmd_feurboard(message: Message, db: Database) -> None:
     rows = await db.feur_board(10)
     if not rows:
-        await message.reply("🏆 Personne n'a encore dit « quoi ». Un groupe de génies. Ou de menteurs.")
+        await message.reply("🏆 Personne n'a encore dit « quoi ».")
         return
     medals = ["🥇", "🥈", "🥉"]
-    lines = ["<b>🏆 Feurboard — les plus grosses victimes du feur</b>"]
+    lines = ["<b>🏆 Feurboard</b>"]
     for rank, row in enumerate(rows):
         badge = medals[rank] if rank < 3 else f"{rank + 1}."
-        lines.append(f"{badge} {_who(row)} — {row['count']} « quoi » · {feur_title(row['count'])}")
-    mine = await db.feur_count(message.from_user.id)
-    lines.append(f"\n<i>Toi : {mine} « quoi » — {feur_title(mine)}</i>")
+        lines.append(f"{badge} {_who(row)} — {row['count']} · {feur_title(row['count'])}")
     await message.reply("\n".join(lines))
 
 
@@ -64,14 +61,14 @@ def _format_quote(row) -> str:
 async def cmd_citer(message: Message, bot: Bot, db: Database) -> None:
     reply = message.reply_to_message
     if message.chat.type == ChatType.PRIVATE or reply is None or not reply.from_user:
-        await message.reply("📜 Réponds au message à graver dans le livre d'or.")
+        await message.reply("📜 Réponds au message à citer.")
         return
     text = reply.text or reply.caption
     if not text:
-        await message.reply("📜 Je cite des mots, pas des stickers. Même si ce sticker était éloquent.")
+        await message.reply("📜 Pas de texte à citer.")
         return
     if reply.from_user.id == bot.id:
-        await message.reply("📜 Me citer moi-même ? J'ai de l'ego, mais quand même.")
+        await message.reply("📜 Pas moi.")
         return
     if on_cooldown(f"citer:{message.from_user.id}", 10):
         return
@@ -80,12 +77,9 @@ async def cmd_citer(message: Message, bot: Bot, db: Database) -> None:
         reply.from_user.id, author, text[:1000], int(reply.date.timestamp()), reply.message_id, message.from_user.id
     )
     if quote_id is None:
-        await message.reply("📜 Déjà dans le livre d'or. On ne grave pas deux fois la même bêtise.")
+        await message.reply("📜 Déjà cité.")
         return
-    await message.reply(
-        f"📜 Citation <b>#{quote_id}</b> gravée dans le livre d'or.\n"
-        f"<i>Elle te suivra toute ta vie, {escape(author)}.</i>"
-    )
+    await message.reply(f"📜 Citation <b>#{quote_id}</b> enregistrée")
 
 
 @router.message(Command("citation", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -94,17 +88,16 @@ async def cmd_citation(message: Message, command: CommandObject, bot: Bot, db: D
     if arg.isdigit() and len(arg) < 5:
         row = await db.get_quote(int(arg))
         if row is None:
-            await message.reply(f"📜 Pas de citation #{arg}. Elle a dû être censurée.")
+            await message.reply(f"📜 Pas de citation #{arg}.")
             return
     else:
         target, _, error = await resolve_target(message, command.args or "", bot, db, cfg) if arg else (None, "", None)
         if error:
-            await message.reply(error)
+            await reply_error(message, error)
             return
         row = await db.random_quote(target.id if target else None)
         if row is None:
-            who = f"{target.mention} n'a" if target else "Personne n'a"
-            await message.reply(f"📜 {who} encore rien dit de mémorable. Réponds à une perle avec <code>.citer</code>.")
+            await message.reply(f"📜 Aucune citation{' de ' + target.mention if target else ''}.")
             return
     await message.reply(_format_quote(row))
 
@@ -113,9 +106,9 @@ async def cmd_citation(message: Message, command: CommandObject, bot: Bot, db: D
 async def cmd_delcitation(message: Message, command: CommandObject, db: Database) -> None:
     arg = (command.args or "").strip().lstrip("#")
     if arg.isdigit() and await db.delete_quote(int(arg)):
-        await message.reply(f"🗑 Citation #{arg} effacée de l'Histoire. Comme si elle n'avait jamais existé.")
+        await message.reply(f"🗑 Citation #{arg} supprimée")
     else:
-        await message.reply("Usage : <code>.delcitation 12</code> (le numéro affiché sous la citation).")
+        await message.reply("Usage : <code>/delcitation 12</code>")
 
 
 # --- Top des bavards ---
@@ -125,14 +118,14 @@ async def cmd_delcitation(message: Message, command: CommandObject, db: Database
 async def cmd_top(message: Message, db: Database) -> None:
     rows = await db.top_talkers(days=7, limit=10)
     if not rows:
-        await message.reply("📊 Personne n'a parlé cette semaine. Un groupe de moines.")
+        await message.reply("📊 Personne n'a parlé cette semaine.")
         return
-    lines = ["<b>📊 Top des bavards — 7 derniers jours</b>"]
+    lines = ["<b>📊 Top de la semaine</b>"]
     for rank, row in enumerate(rows):
         lines.append(f"{TOP_TITLES[rank]} : {_who(row)} — {row['total']} messages")
     ghost = await db.ghost(days=7)
     if ghost and ghost["user_id"] not in {row["user_id"] for row in rows}:
-        lines.append(f"\n👻 <b>Le fantôme</b> : {_who(ghost)} — {ghost['total']} message(s). Ça va, tu respires ?")
+        lines.append(f"👻 Fantôme : {_who(ghost)} — {ghost['total']}")
     await message.reply("\n".join(lines))
 
 
@@ -168,24 +161,21 @@ async def cmd_anniv(message: Message, command: CommandObject, db: Database) -> N
     user_id = message.from_user.id
     if arg in ("off", "suppr", "supprimer"):
         await db.delete_birthday(user_id)
-        await message.reply("🎂 Anniversaire oublié. Tu vieilliras en secret.")
+        await message.reply("🎂 Anniversaire supprimé.")
         return
     if not arg:
         row = await db.get_birthday(user_id)
         if row:
-            await message.reply(f"🎂 Ton anniversaire : le {row['day']} {MONTHS[row['month'] - 1]}. Je n'oublierai pas.")
+            await message.reply(f"🎂 {row['day']} {MONTHS[row['month'] - 1]}")
         else:
-            await message.reply("🎂 Dis-moi ta date : <code>.anniv 12/03</code>. Promis, je ne demande pas l'année.")
+            await message.reply("Usage : <code>/anniv JJ/MM</code>")
         return
     parsed = _parse_birthday(arg)
     if parsed is None:
-        await message.reply("🎂 Format : <code>.anniv JJ/MM</code>, par exemple <code>.anniv 12/03</code>.")
+        await message.reply("Usage : <code>/anniv JJ/MM</code>")
         return
     await db.set_birthday(user_id, *parsed)
-    await message.reply(
-        f"🎂 Noté : le {parsed[0]} {MONTHS[parsed[1] - 1]}. "
-        "Je te le souhaiterai à minuit pile, devant tout le monde. Tu ne pourras pas fuir."
-    )
+    await message.reply(f"🎂 Noté : {parsed[0]} {MONTHS[parsed[1] - 1]}")
 
 
 @router.message(Command("anniversaires", "annivs", prefix=PREFIXES, ignore_case=True), IsMember())
@@ -193,7 +183,7 @@ async def cmd_anniversaires(message: Message, db: Database, cfg: Config) -> None
     today = datetime.now(cfg.tz).date()
     rows = await db.all_birthdays()
     if not rows:
-        await message.reply("🎂 Aucun anniversaire enregistré. <code>.anniv JJ/MM</code> pour donner le tien.")
+        await message.reply("🎂 Aucun anniversaire.")
         return
     upcoming = sorted(rows, key=lambda row: _next_birthday(row["day"], row["month"], today))[:10]
     lines = ["<b>🎂 Prochains anniversaires</b>"]
@@ -219,7 +209,7 @@ async def wish_birthdays(bot: Bot, db: Database, cfg: Config) -> None:
     for row in people:
         try:
             await bot.send_message(
-                cfg.chat_id, f"🎂 <b>Joyeux anniversaire {_who(row)} !</b> 🎉\n<i>{random.choice(BIRTHDAY_LINES)}</i>"
+                cfg.chat_id, f"🎂 <b>Joyeux anniversaire {_who(row)} !</b> 🎉"
             )
         except TelegramAPIError as exc:
             log.warning("Anniversaire de %s non souhaité : %s", row["user_id"], exc)

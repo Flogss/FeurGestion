@@ -220,20 +220,8 @@ ROULETTE_DEAD = [
     "💥 PAN ! {mention} a perdu. On se recueille 1 minute. 🕯",
     "💥 PAN ! Et {mention} rejoint le cimetière des bavards pour 1 minute.",
 ]
-ROULETTE_ARMORED = "💥 PAN ! … mais {mention} est admin : gilet pare-balles. C'est de la triche, mais c'est la vie."
+ROULETTE_ARMORED = "💥 PAN ! … {mention} est admin, gilet pare-balles."
 
-COUPLE_QUIPS = [
-    "Les bans de mariage sont publiés. Enfin, les bans tout court, on verra.",
-    "Ils ne le savent pas encore, mais c'est écrit.",
-    "Félicitations. Ou condoléances, au choix.",
-    "Le bot a parlé. Le bot ne se trompe jamais (sauf souvent).",
-]
-ELU_QUIPS = [
-    "Bravo, c'est mérité. Personne ne sait pourquoi, mais c'est mérité.",
-    "Une statue sera érigée en ton honneur. En carton.",
-    "Tu peux le mettre sur ton CV.",
-    "Le peuple a voté. Enfin, moi. Mais moi c'est le peuple.",
-]
 
 INSULT_NOUNS = [
     "paltoquet", "faquin", "maraud", "malotru", "gougnafier", "olibrius", "foutriquet", "freluquet", "cuistre",
@@ -302,30 +290,8 @@ TOP_TITLES = [
     "🔟 Juste là pour la photo",
 ]
 
-BIRTHDAY_LINES = [
-    "+1 an, -1 neurone. On t'aime (un peu).",
-    "T'as pris un an. Nous on a pris l'habitude de te supporter.",
-    "Souffle tes bougies, pas sur le gâteau des autres.",
-    "Encore un an de plus à dire « quoi ». Feur.",
-]
 
 MONTHS = [
     "janvier", "février", "mars", "avril", "mai", "juin",
     "juillet", "août", "septembre", "octobre", "novembre", "décembre",
 ]
-
-
-def flocko_comment(value: int) -> str:
-    if value == 0:
-        return "0 %. Pas une goutte de flocko. Impressionnant, dans l'autre sens."
-    if value <= 20:
-        return "Flocko en PLS. Va te reposer."
-    if value <= 40:
-        return "Flocko timide. Ça viendra. Peut-être."
-    if value <= 60:
-        return "Flocko dans la moyenne. Comme ta vie."
-    if value <= 80:
-        return "Ça flocko sérieusement, là. Respect."
-    if value < 100:
-        return "FLOCKO ULTIME. Les autres tremblent."
-    return "💯 100 % FLOCKO. Plus rien à prouver. Encadre-le."

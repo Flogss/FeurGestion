@@ -4,11 +4,26 @@ from html import escape
 from aiogram import Bot
 from aiogram.enums import ChatType, MessageEntityType
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import Message, User
+from aiogram.types import Message, ReactionTypeEmoji, User
 
 from .config import Config
 from .db import Database, full_name
 from .utils import mention
+
+
+# Erreur spéciale : @pseudo jamais vu. Pas de message, juste une réaction 🤷 sur la commande.
+UNKNOWN_USER = "unknown-user"
+
+
+async def reply_error(message: Message, error: str | None, usage: str | None = None) -> None:
+    if error == UNKNOWN_USER:
+        try:
+            await message.react([ReactionTypeEmoji(emoji="🤷")])
+        except TelegramAPIError:
+            pass
+        return
+    if error or usage:
+        await message.reply(error or usage)
 
 
 @dataclass
@@ -63,11 +78,7 @@ async def resolve_target(
     if first.startswith("@") and len(first) > 1:
         row = await db.find_by_username(first)
         if row is None:
-            return None, rest, (
-                f"❌ Je ne connais pas {escape(first)}.\n"
-                "Il doit avoir écrit au moins une fois depuis mon arrivée (je suis un bot, pas un voyant). "
-                "Sinon utilise son ID ou réponds à un de ses messages."
-            )
+            return None, rest, UNKNOWN_USER
         return Target.from_row(row), rest, None
 
     if first.isdigit() and len(first) >= 5:

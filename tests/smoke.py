@@ -142,6 +142,10 @@ class FakeSession(BaseSession):
         if type(method).__name__ == "SendAudio":
             return Message(message_id=97, date=now, chat={"id": method.chat_id, "type": "private"},
                            audio={"file_id": "AUDIO_FILE_ID", "file_unique_id": "a", "duration": 30})
+        if type(method).__name__ == "SendPhoto" and not isinstance(method.photo, str):
+            check_html(method.caption or "")
+            return Message(message_id=96, date=now, chat={"id": method.chat_id, "type": "supergroup"},
+                           photo=[{"file_id": "BOARD_FILE", "file_unique_id": "b", "width": 900, "height": 1400}])
         if type(method).__name__.startswith("Send"):
             check_html(getattr(method, "text", None) or getattr(method, "caption", None) or "")
             return Message(message_id=99, date=now, chat={"id": method.chat_id, "type": "supergroup"}, text="ok")
@@ -305,13 +309,13 @@ async def main():
 
     # Unmute alors qu'il n'est plus mute
     await send(ADMIN, ".unmute @victim")
-    assert not session.of(RestrictChatMember) and any("pas mute" in t for t in replies())
+    assert not session.of(RestrictChatMember) and any("Pas mute" in t for t in replies())
 
     # Mute définitif (sans durée ni raison) : seule la commande est supprimée
     cmd = await send(ADMIN, ".MUTE @victim")
     assert session.of(RestrictChatMember)[0].until_date is None
     assert session.of(DeleteMessages)[0].message_ids == [cmd["message_id"]]
-    assert any("définitif" in t and "Raison : aucune" in t for t in replies())
+    assert any("définitif" in t and "📝" not in t for t in replies())
     await send(ADMIN, "!kick @victim relou")
     assert session.of(BanChatMember) and session.of(UnbanChatMember)
     assert not any(c.reply_markup for c in session.of(SendMessage)), "pas de bouton Annuler sur un kick"
@@ -328,7 +332,7 @@ async def main():
 
     # Pseudo inconnu
     await send(ADMIN, ".ban @inconnu")
-    assert any("Je ne connais pas" in t for t in replies())
+    assert not replies() and any(type(c).__name__ == "SetMessageReaction" and c.reaction[0].emoji == "🤷" for c in session.calls)
 
     # Mention sans pseudo (text_mention)
     await send(ADMIN, ".mute Sans Pseudo 1h spam", entities=[{"type": "text_mention", "offset": 6, "length": 11, "user": NOUSER}])
@@ -354,7 +358,7 @@ async def main():
     deleted = session.of(DeleteMessages)
     assert deleted and deleted[0].message_ids == [cmd["message_id"], pub["message_id"]], deleted
     assert session.calls.index(session.of(ForwardMessage)[0]) < session.calls.index(deleted[0]), "preuve après suppression"
-    assert any("définitif" in t and "Raison : aucune" in t for t in replies())
+    assert any("définitif" in t and "📝" not in t for t in replies())
     data = undo_button()
     await click(RANDOM, data)
     assert session.of(AnswerCallbackQuery)[0].show_alert and not session.of(UnbanChatMember), "un non-admin a annulé"
@@ -372,18 +376,18 @@ async def main():
 
     # .logs
     await send(ADMIN, ".logs")
-    assert "dernières sanctions" in replies()[0] and "Victime" in replies()[0]
+    assert "Dernières sanctions" in replies()[0] and "Victime" in replies()[0]
 
     # .help (aussi en privé)
     await send(ADMIN, ".help", chat=ADMIN["id"])
     assert "FeurBot" in replies()[0]
     await send(ADMIN, "/start", chat=ADMIN["id"])
-    assert "logs ici" in replies()[0]
+    assert "Logs activés" in replies()[0]
 
     # Admin anonyme
     await send({"id": 1087968824, "is_bot": True, "first_name": "Group", "username": "GroupAnonymousBot"},
                ".ban @victim", sender_chat={"id": CHAT, "type": "supergroup", "title": "feurchat"})
-    assert any("mode anonyme" in t for t in replies())
+    assert any("Rester anonyme" in t for t in replies())
 
     # Message de bienvenue : texte avec mise en forme et variables
     await send(ADMIN, ".welcome Yo {mention} sur {chat} ({count} membres)",
@@ -498,18 +502,18 @@ async def main():
     await send(ADMIN, ".warn @victim2 flood")
     assert "Warn 2/3" in replies()[0]
     await click(ADMIN, first_warn)
-    assert "Warn retiré" in session.of(EditMessageText)[0].text
+    assert "Retiré par" in session.of(EditMessageText)[0].text
     await send(RANDOM, ".warns @victim2")
     assert "1/3" in replies()[0] and "flood" in replies()[0]
     await send(ADMIN, ".warnlimit 2")
     await send(ADMIN, ".warnaction ban")
     await send(ADMIN, ".warn @victim2 encore")
-    assert session.of(BanChatMember) and "automatique" in replies()[0], replies()
+    assert session.of(BanChatMember) and "🟥" in replies()[0], replies()
     assert not await db.user_warns(VICTIM["id"]), "compteur pas remis à zéro"
     session.status[VICTIM["id"]] = "member"
     await send(ADMIN, ".warn @victim2 test")
     await send(ADMIN, ".unwarn @victim2")
-    assert "retiré" in replies()[0] and not await db.user_warns(VICTIM["id"])
+    assert replies()[0].startswith("🧽") and not await db.user_warns(VICTIM["id"])
     await send(ADMIN, ".warnlimit 3")
     await send(ADMIN, ".warnaction mute")
 
@@ -543,7 +547,7 @@ async def main():
 
     # --- Règles ---
     await send(RANDOM, ".rules")
-    assert "anarchie" in replies()[0]
+    assert "Pas de règles" in replies()[0]
     await send(ADMIN, ".setrules 1. Pas de pub\n2. On ne dit pas quoi")
     await send(RANDOM, ".regles")
     assert "Pas de pub" in replies()[0]
@@ -601,7 +605,7 @@ async def main():
     await send(RANDOM, ".id", reply_to=spam)
     assert f"<code>{RANDOM['id']}</code>" in replies()[0] and f"<code>{CHAT}</code>" in replies()[0]
     await send(RANDOM, ".ping")
-    assert "Pong !" in session.of(EditMessageText)[0].text
+    assert session.of(EditMessageText)[0].text.endswith(" ms")
     utils._cooldowns.clear()
     await send(NOUSER, ".report", reply_to=spam)
     assert any(t.startswith("#REPORT") for t in replies()) and session.of(ForwardMessage)
@@ -633,7 +637,7 @@ async def main():
     await send(RANDOM, "/help duel")
     assert "/duel" in replies()[0] and "Aide pour /duel" in replies()[0]
     await send(RANDOM, "/help ban")
-    assert "Je ne connais pas" in replies()[0], "un membre ne doit pas voir l'aide des commandes staff"
+    assert "inconnue" in replies()[0], "un membre ne doit pas voir l'aide des commandes staff"
 
     # --- Annonce des changements de pseudo ---
     await send(ADMIN, ".sangmata on")
@@ -649,7 +653,7 @@ async def main():
     await send(RANDOM, ".mod 555555")
     assert replies() and replies()[0] in QUIPS["not_admin"] and not await db.is_mod(MOD["id"])
     await send(ADMIN, ".mod 555555")
-    assert "est maintenant modo" in replies()[0] and any(t.startswith("#MOD") for t in replies())
+    assert "est modo" in replies()[0] and any(t.startswith("#MOD") for t in replies())
     assert await db.is_mod(MOD["id"])
     await send(ADMIN, ".mod 555555")
     assert "déjà modo" in replies()[0]
@@ -676,14 +680,14 @@ async def main():
     assert not session.of(RestrictChatMember) and "admin du bot" in replies()[0]
     await send(ADMIN, f".mod {RANDOM['id']}")
     await send(MOD, f".mute {RANDOM['id']} 1h")
-    assert not session.of(RestrictChatMember) and "modo, comme toi" in replies()[0]
+    assert not session.of(RestrictChatMember) and "C'est un modo" in replies()[0]
     await send(ADMIN, f".mute {RANDOM['id']} 1h")
     assert session.of(RestrictChatMember), "un admin doit pouvoir sanctionner un modo"
     await send(ADMIN, f".unmod {RANDOM['id']}")
     assert "n'est plus modo" in replies()[0]
     utils._cooldowns.clear()
     await send(MOD, ".lock liens")
-    assert "T'es modo" in replies()[0] and not await db.get_setting("locks", [])
+    assert "Réservé aux admins" in replies()[0] and not await db.get_setting("locks", [])
 
     # Les verrous ne touchent pas les modos
     await send(ADMIN, ".lock liens")
@@ -725,7 +729,7 @@ async def main():
     await send(VICTIM, "c'est quoi")
     assert any("Victime certifiée" in t for t in replies()), replies()
     await send(NOUSER, "/feurboard")
-    assert "Feurboard" in replies()[0] and "10 « quoi »" in replies()[0]
+    assert "Feurboard" in replies()[0] and "— 10 ·" in replies()[0]
 
     # --- Toutes les commandes marchent avec / (et @nom_du_bot) ---
     utils._cooldowns.clear()
@@ -746,7 +750,7 @@ async def main():
     await send(VICTIM, "moi aussi je veux de la pizza")
     assert not any("BOOM" in t for t in replies()), "le mot ne doit exploser qu'une fois par jour"
     await send(VICTIM, ".motinterdit")
-    assert "Déjà trouvé" in replies()[0]
+    assert "Trouvé par" in replies()[0]
     await send(RANDOM, ".motinterdit off")
     assert await db.get_setting("motinterdit_on"), "un membre a désactivé le mot interdit"
     await db.set_setting("motinterdit_on", False)
@@ -787,30 +791,30 @@ async def main():
         session.status[RANDOM["id"]] = "member"
         await click(VICTIM, duel_data)
         assert session.of(RestrictChatMember)[0].user_id == RANDOM["id"], "le perdant (challenger) doit être mute"
-        assert "Duel" in session.of(EditMessageText)[0].text
+        assert "PAN" in session.of(EditMessageText)[0].text
     finally:
         games.random.choice = real_choice
     await click(VICTIM, duel_data.replace("duel:ok:", "duel:no:"))
-    assert "Poule mouillée" in session.of(EditMessageText)[0].text
+    assert "refuse" in session.of(EditMessageText)[0].text
     old = duel_data.rsplit(":", 1)[0] + ":1000"
     await click(VICTIM, old)
     assert "expiré" in session.of(EditMessageText)[0].text
 
     # --- Prison ---
     await send(VICTIM, "/prison")
-    assert "haute sécurité" in replies()[0] and "🎮" in replies()[0], replies()
+    assert "Prison" in replies()[0] and "🎮" in replies()[0], replies()
 
     # --- Tirages du jour ---
     utils._cooldowns.clear()
     await send(VICTIM, "/couple")
     first_couple = replies()[0]
-    assert "Couple du jour" in first_couple
+    assert "❤️" in first_couple
     utils._cooldowns.clear()
     await send(NOUSER, "/couple")
-    assert replies()[0].split("\n")[1] == first_couple.split("\n")[1], "le couple doit rester le même toute la journée"
+    assert replies()[0] == first_couple, "le couple doit rester le même toute la journée"
     utils._cooldowns.clear()
     await send(VICTIM, "/elu")
-    assert "boloss du jour" in replies()[0]
+    assert "Boloss du jour" in replies()[0]
     utils._cooldowns.clear()
     await send(VICTIM, f"/love {RANDOM['id']}")
     love = replies()[0]
@@ -819,12 +823,12 @@ async def main():
     assert "%" in love and replies()[0] == love, "le score d'amour doit être fixe pour la journée"
     utils._cooldowns.clear()
     await send(VICTIM, "/qi")
-    assert "QI de" in replies()[0]
+    assert replies()[0].startswith("🧠")
 
     # --- Hack, clash, moqueur ---
     await send(VICTIM, f"/hack {RANDOM['id']}")
     edits = session.of(EditMessageText)
-    assert len(edits) == len(HACK_STEPS) and "terminé" in edits[-1].text
+    assert len(edits) == len(HACK_STEPS) and "piraté" in edits[-1].text
     utils._cooldowns.clear()
     await send(VICTIM, f"/clash {RANDOM['id']}")
     assert "espèce de" in replies()[0]
@@ -852,11 +856,11 @@ async def main():
 
     # --- Top des bavards ---
     await send(VICTIM, "/top")
-    assert "Top des bavards" in replies()[0] and "Pipelette en chef" in replies()[0]
+    assert "Top de la semaine" in replies()[0] and "Pipelette en chef" in replies()[0]
 
     # --- Anniversaires ---
     await send(VICTIM, "/anniv 31/02")
-    assert "Format" in replies()[0]
+    assert "Usage" in replies()[0]
     today = datetime.now(cfg.tz)
     await send(VICTIM, f"/anniv {today.day}/{today.month}")
     assert "Noté" in replies()[0]
@@ -871,10 +875,10 @@ async def main():
 
     # --- Flocko ---
     await send(VICTIM, "/flocko")
-    assert "Taux de flocko" in replies()[0]
+    assert replies()[0].startswith("🧪") and replies()[0].endswith("%</b>")
     first = await db.get_flocko(VICTIM["id"])
     await send(VICTIM, ".flocko")
-    assert "Prochain tirage dans" in replies()[0]
+    assert "⏳" in replies()[0]
     await db.conn.execute("UPDATE flocko SET last_at = last_at - 13 * 3600, best = 0 WHERE user_id = ?", (VICTIM["id"],))
     await db.conn.commit()
     await send(VICTIM, "/flocko")
@@ -891,13 +895,21 @@ async def main():
     utils._cooldowns.clear()
     await send(NOUSER, "/topflocko")
     photo = session.of(SendPhoto)[0]
-    assert photo.photo.data.startswith(b"\x89PNG") and "Top flocko" in photo.caption
+    assert photo.photo.data.startswith(b"\xff\xd8") and not photo.caption
     buttons = photo.reply_markup.inline_keyboard[0]
     assert buttons[0].text == "⬅️ Suivant" and buttons[0].callback_data == "flocko:2"
     await click(NOUSER, "flocko:2")
     media = [c for c in session.calls if type(c).__name__ == "EditMessageMedia"]
-    assert media and media[0].media.media.data.startswith(b"\x89PNG")
+    assert media and media[0].media.media.data.startswith(b"\xff\xd8")
     assert media[0].reply_markup.inline_keyboard[0][-1].text == "Précédent ➡️"
+    # Classement inchangé : la même image est renvoyée telle quelle, sans redessiner
+    utils._cooldowns.clear()
+    await send(NOUSER, "/topflocko")
+    assert session.of(SendPhoto)[0].photo == "BOARD_FILE", "l'image déjà envoyée doit être réutilisée"
+    await db.save_flocko(700001, 99)
+    utils._cooldowns.clear()
+    await send(NOUSER, "/topflocko")
+    assert not isinstance(session.of(SendPhoto)[0].photo, str), "un score a changé : il faut redessiner"
 
     # --- Menu « / » de Telegram ---
     session.calls.clear()
@@ -1043,7 +1055,7 @@ async def main():
     for _, _, text in help_module.SECTIONS.values():
         check_html(text)
     for role in help_module.ROLES:
-        check_html(help_module._menu("Flo <3", role)[0])
+        check_html(help_module._menu(role)[0])
     for text in welcome.DEFAULT_TEXTS:
         check_html(text)
 

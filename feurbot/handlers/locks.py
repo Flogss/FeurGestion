@@ -50,14 +50,14 @@ ALIASES = {
 }
 LINK_RE = re.compile(r"(https?://|www\.|t\.me/|telegram\.(me|dog)/|\b[\w-]+\.(com|fr|net|org|io|gg|xyz|link|ly)\b)", re.I)
 NOTICES = {
-    "liens": "🔗 Pas de liens ici, {mention}. PUB = MUTE, c'est écrit dans la bio. Ceci était ton avertissement amical 🙂",
-    "transferts": "📨 Les transferts sont interdits ici, {mention}. Écris avec tes propres mots, tu sais faire.",
+    "liens": "🔗 Pas de liens, {mention}. PUB = MUTE.",
+    "transferts": "📨 Pas de transferts, {mention}.",
 }
 
 
 def _usage() -> str:
     names = ", ".join(f"<code>{name}</code>" for name in (*PERMISSION_LOCKS, *DELETE_LOCKS))
-    return f"Usage : <code>.lock type</code> / <code>.unlock type</code>\nTypes : {names}"
+    return f"Usage : <code>/lock type</code> — {names}"
 
 
 async def _set_permission_lock(name: str, locked: bool, bot: Bot, cfg: Config) -> None:
@@ -79,7 +79,7 @@ async def _toggle(message: Message, command: CommandObject, locked: bool, bot: B
         try:
             await _set_permission_lock(name, locked, bot, cfg)
         except TelegramAPIError as exc:
-            await message.reply(f"❌ Telegram a refusé : {escape(exc.message)}")
+            await message.reply(f"❌ Telegram : {escape(exc.message)}")
             return
         label = PERMISSION_LOCKS[name][1]
     else:
@@ -93,10 +93,10 @@ async def _toggle(message: Message, command: CommandObject, locked: bool, bot: B
 
     if locked:
         await message.reply(
-            f"🔒 Verrouillé : {label}.\n<i>Les admins et les modos, eux, font ce qu'ils veulent. Privilège.</i>"
+            f"🔒 {label}"
         )
     else:
-        await message.reply(f"🔓 Déverrouillé : {label}.\n<i>Soyez sages. Ou au moins discrets.</i>")
+        await message.reply(f"🔓 {label}")
 
 
 @router.message(Command("lock", "verrou", prefix=PREFIXES, ignore_case=True), IsAdmin())

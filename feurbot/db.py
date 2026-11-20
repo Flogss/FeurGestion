@@ -143,6 +143,12 @@ class Database:
         self.path = path
         self.tz = tz or ZoneInfo("UTC")
         self.conn: aiosqlite.Connection | None = None
+        # Caches mémoire : la plupart des messages ne touchent plus du tout la base
+        self._settings: dict[str, str | None] = {}
+        self._seen: dict[int, tuple[str | None, str | None, str | None]] = {}
+        self._filters: list[aiosqlite.Row] | None = None
+        self._afk: set[int] = set()
+        self._mods: set[int] = set()
 
     def today(self, offset_days: int = 0) -> str:
         """Date du jour (fuseau du groupe) au format AAAA-MM-JJ."""
@@ -155,8 +161,14 @@ class Database:
         self.conn = await aiosqlite.connect(self.path)
         self.conn.row_factory = aiosqlite.Row
         await self.conn.execute("PRAGMA journal_mode=WAL")
+        await self.conn.execute("PRAGMA synchronous=NORMAL")  # sûr en WAL, et bien plus rapide
+        await self.conn.execute("PRAGMA temp_store=MEMORY")
         await self.conn.executescript(SCHEMA)
         await self.conn.commit()
+        async with self.conn.execute("SELECT user_id FROM afk") as cur:
+            self._afk = {row["user_id"] for row in await cur.fetchall()}
+        async with self.conn.execute("SELECT user_id FROM mods") as cur:
+            self._mods = {row["user_id"] for row in await cur.fetchall()}
 
     async def close(self) -> None:
         if self.conn:
@@ -172,6 +184,18 @@ class Database:
         now = int(time.time())
         username = user.username
         name = full_name(user.first_name, user.last_name)
+        identity = (username, user.first_name, user.last_name)
+
+        if self._seen.get(user.id) == identity:
+            # Déjà connu et rien n'a changé : seulement les compteurs, et rien du tout s'il n'a pas écrit
+            if active:
+                await self.conn.execute(
+                    "UPDATE users SET last_seen = ?, message_count = message_count + 1 WHERE user_id = ?",
+                    (now, user.id),
+                )
+                await self._count_activity(user.id)
+                await self.conn.commit()
+            return None
 
         existing = await self.get_user(user.id)
         change = None
@@ -215,15 +239,21 @@ class Database:
             ),
         )
         if active:
-            await self.conn.execute(
-                """
-                INSERT INTO activity(user_id, day, count) VALUES (?, ?, 1)
-                ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1
-                """,
-                (user.id, self.today()),
-            )
+            await self._count_activity(user.id)
         await self.conn.commit()
+        if len(self._seen) > 20000:
+            self._seen.clear()
+        self._seen[user.id] = identity
         return change
+
+    async def _count_activity(self, user_id: int) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO activity(user_id, day, count) VALUES (?, ?, 1)
+            ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1
+            """,
+            (user_id, self.today()),
+        )
 
     async def get_user(self, user_id: int) -> aiosqlite.Row | None:
         async with self.conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
@@ -317,16 +347,22 @@ class Database:
     # --- Réglages ---
 
     async def get_setting(self, key: str, default=None):
-        async with self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cur:
-            row = await cur.fetchone()
-        return json.loads(row["value"]) if row else default
+        if key not in self._settings:
+            async with self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cur:
+                row = await cur.fetchone()
+            self._settings[key] = row["value"] if row else None
+        raw = self._settings[key]
+        # On garde le JSON en cache : chaque appel reçoit sa propre copie, modifiable sans risque
+        return json.loads(raw) if raw is not None else default
 
     async def set_setting(self, key: str, value) -> None:
+        raw = json.dumps(value, ensure_ascii=False)
         await self.conn.execute(
             "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, json.dumps(value, ensure_ascii=False)),
+            (key, raw),
         )
         await self.conn.commit()
+        self._settings[key] = raw
 
     # --- Warns ---
 
@@ -374,6 +410,8 @@ class Database:
             (kind, name.lower(), text, media_type, file_id, author, int(time.time())),
         )
         await self.conn.commit()
+        if kind == "filter":
+            self._filters = None
 
     async def get_snippet(self, kind: str, name: str) -> aiosqlite.Row | None:
         async with self.conn.execute(
@@ -382,12 +420,19 @@ class Database:
             return await cur.fetchone()
 
     async def list_snippets(self, kind: str) -> list[aiosqlite.Row]:
+        if kind == "filter" and self._filters is not None:
+            return self._filters  # relus à chaque message : gardés en mémoire
         async with self.conn.execute("SELECT * FROM snippets WHERE kind = ? ORDER BY name", (kind,)) as cur:
-            return list(await cur.fetchall())
+            rows = list(await cur.fetchall())
+        if kind == "filter":
+            self._filters = rows
+        return rows
 
     async def delete_snippet(self, kind: str, name: str) -> bool:
         cur = await self.conn.execute("DELETE FROM snippets WHERE kind = ? AND name = ?", (kind, name.lower()))
         await self.conn.commit()
+        if kind == "filter":
+            self._filters = None
         return cur.rowcount > 0
 
     # --- AFK ---
@@ -398,8 +443,11 @@ class Database:
             (user_id, reason, int(time.time())),
         )
         await self.conn.commit()
+        self._afk.add(user_id)
 
     async def get_afk(self, user_id: int) -> aiosqlite.Row | None:
+        if user_id not in self._afk:
+            return None
         async with self.conn.execute("SELECT * FROM afk WHERE user_id = ?", (user_id,)) as cur:
             return await cur.fetchone()
 
@@ -408,6 +456,7 @@ class Database:
         if row:
             await self.conn.execute("DELETE FROM afk WHERE user_id = ?", (user_id,))
             await self.conn.commit()
+        self._afk.discard(user_id)
         return row
 
     # --- Modos ---
@@ -418,16 +467,17 @@ class Database:
             (user_id, added_by, int(time.time())),
         )
         await self.conn.commit()
+        self._mods.add(user_id)
         return cur.rowcount > 0
 
     async def remove_mod(self, user_id: int) -> bool:
         cur = await self.conn.execute("DELETE FROM mods WHERE user_id = ?", (user_id,))
         await self.conn.commit()
+        self._mods.discard(user_id)
         return cur.rowcount > 0
 
     async def is_mod(self, user_id: int) -> bool:
-        async with self.conn.execute("SELECT 1 FROM mods WHERE user_id = ?", (user_id,)) as cur:
-            return await cur.fetchone() is not None
+        return user_id in self._mods
 
     async def list_mods(self) -> list[aiosqlite.Row]:
         async with self.conn.execute(
