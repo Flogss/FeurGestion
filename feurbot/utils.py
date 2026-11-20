@@ -24,6 +24,7 @@ ACTION_LABELS = {
     "kick": "👢 Kick",
     "warn": "⚠️ Warn",
     "unwarn": "🧽 Warn retiré",
+    "jail": "🎮 Mute de jeu",
     "mod": "🛡 Nommé modo",
     "unmod": "🪖 Plus modo",
     "join": "📥 Arrivée",

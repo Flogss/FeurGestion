@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import traceback
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -51,15 +52,17 @@ from aiogram.types import (  # noqa: E402
     Message,
     Update,
     User,
+    UserProfilePhotos,
 )
 
 from feurbot import utils  # noqa: E402
 from feurbot.app import build_dispatcher  # noqa: E402
 from feurbot.config import load_config  # noqa: E402
 from feurbot.db import Database  # noqa: E402
+from feurbot import commands  # noqa: E402
+from feurbot.handlers import fun, games, memory, passive, welcome  # noqa: E402
 from feurbot.handlers import help as help_module  # noqa: E402
-from feurbot.handlers import welcome  # noqa: E402
-from feurbot.jokes import EIGHTBALL, JOKES, QUIPS, feur_reply  # noqa: E402
+from feurbot.jokes import EIGHTBALL, HACK_STEPS, JOKES, QUOI_ANSWERS, QUIPS, analyze, feur_reply  # noqa: E402
 from feurbot.utils import format_duration, parse_duration  # noqa: E402
 
 CHAT = -1003940270802
@@ -144,6 +147,12 @@ class FakeSession(BaseSession):
         if isinstance(method, SetChatPermissions):
             self.permissions = method.permissions.model_dump(exclude_none=True)
             return True
+        if type(method).__name__ in ("SetMessageReaction", "SetMyCommands", "DeleteMyCommands"):
+            return True
+        if type(method).__name__ == "GetUserProfilePhotos":
+            return UserProfilePhotos(total_count=0, photos=[])
+        if type(method).__name__ == "EditMessageMedia":
+            return Message(message_id=method.message_id, date=now, chat={"id": method.chat_id, "type": "supergroup"}, text="ok")
         if isinstance(method, (DeleteMessage, PinChatMessage, UnpinChatMessage)):
             return True
         if isinstance(method, EditMessageText):
@@ -194,12 +203,15 @@ async def main():
     cfg = load_config()
     assert cfg.chat_id == CHAT and cfg.log_chat_id == ADMIN["id"]
 
-    db = Database(cfg.db_path)
+    db = Database(cfg.db_path, cfg.tz)
     await db.connect()
     session = FakeSession()
 
     bot = Bot("9006812840:TEST", session=session, default=DefaultBotProperties(parse_mode="HTML"))
     dp = build_dispatcher(cfg, db)
+    await db.set_setting("motinterdit_on", False)
+    passive.EASTER_EGG_CHANCE = 0
+    fun.HACK_DELAY = 0
     used = dp.resolve_used_update_types()
     assert {"message", "chat_member", "my_chat_member", "callback_query"} <= set(used), used
 
@@ -372,7 +384,7 @@ async def main():
                entities=[{"type": "bold", "offset": 9, "length": 2}])
     preview = replies()[0]
     assert "<b>Yo</b>" in preview and "ꜰᴇᴜʀᴄʜᴀᴛ" in preview and "42 membres" in preview, preview
-    assert (await welcome.get_welcome(db))["text"].startswith("<b>Yo</b>")
+    assert (await welcome.get_welcome(db))["texts"] == ["<b>Yo</b> {mention} sur {chat} ({count} membres)"]
 
     # Photo avec légende .welcome
     await send(ADMIN, None, photo=[{"file_id": "PHOTO_S", "file_unique_id": "s", "width": 90, "height": 90},
@@ -454,7 +466,8 @@ async def main():
     assert feur_reply("bonjour") is None and feur_reply("") is None
     utils._cooldowns.clear()
     await send(RANDOM, "tu fais quoi ?")
-    assert any("feur" in t.lower() for t in replies()), replies()
+    assert any(t in QUOI_ANSWERS for t in replies()), replies()
+    assert any(type(c).__name__ == "SetMessageReaction" and c.reaction[0].emoji == "🤡" for c in session.calls)
     await send(RANDOM, "et toi tu dis quoi")
     assert not replies(), "le cooldown feur ne marche pas"
     await send(ADMIN, ".feur off")
@@ -604,10 +617,17 @@ async def main():
     await send(ADMIN, ".help")
     menu = session.of(SendMessage)[0]
     assert "FeurBot" in menu.text and menu.reply_markup.inline_keyboard
+    await click(RANDOM, "help:jeux")
+    assert "/flocko" in session.of(EditMessageText)[0].text
     await click(RANDOM, "help:warns")
-    assert "Warns" in session.of(EditMessageText)[0].text
-    await send(RANDOM, ".aide")
-    assert replies()[0] == help_module.MEMBER_HELP
+    assert session.of(AnswerCallbackQuery)[0].show_alert and not session.of(EditMessageText), "rubrique staff visible"
+    await send(RANDOM, "/aide")
+    member_menu = session.of(SendMessage)[0]
+    assert "membre" in member_menu.text and len(sum(member_menu.reply_markup.inline_keyboard, [])) == 4
+    await send(RANDOM, "/help duel")
+    assert "/duel" in replies()[0] and "Aide pour /duel" in replies()[0]
+    await send(RANDOM, "/help ban")
+    assert "Je ne connais pas" in replies()[0], "un membre ne doit pas voir l'aide des commandes staff"
 
     # --- Annonce des changements de pseudo ---
     await send(ADMIN, ".sangmata on")
@@ -668,7 +688,7 @@ async def main():
     # Aide, équipe et fiche
     await send(MOD, ".help")
     menu = session.of(SendMessage)[0]
-    assert menu.text == help_module.MOD_MENU and len(sum(menu.reply_markup.inline_keyboard, [])) == 4
+    assert "modo" in menu.text and len(sum(menu.reply_markup.inline_keyboard, [])) == 7
     await send(VICTIM, ".mods")
     assert "Sans Pseudo" in replies()[0] and "Admins" in replies()[0]
     await send(ADMIN, ".info 555555")
@@ -683,12 +703,242 @@ async def main():
     await send(ADMIN, ".unmod 555555")
     assert "n'est pas modo" in replies()[0]
 
+    # ================= Fonctions fun (v3) =================
+    utils._cooldowns.clear()
+
+    # --- Les petits malins du feur ---
+    assert analyze("quoi (pas de feur)").answer == "Bien essayé. Feur. 😏"
+    assert analyze("ok feur").answer.startswith("Tu fais mon travail")
+    assert analyze("mdr t'es nul").reaction == "🤣"
+    assert analyze("hein").answer in ("deux", "apagnan", None)
+    assert "quoicoubeh" in QUOI_ANSWERS
+
+    # --- Feurboard et titres ---
+    for _ in range(9):
+        await db.add_feur(VICTIM["id"])
+    await send(VICTIM, "c'est quoi")
+    assert any("Victime certifiée" in t for t in replies()), replies()
+    await send(NOUSER, "/feurboard")
+    assert "Feurboard" in replies()[0] and "10 « quoi »" in replies()[0]
+
+    # --- Toutes les commandes marchent avec / (et @nom_du_bot) ---
+    utils._cooldowns.clear()
+    await send(NOUSER, "/blague@feurzizibot")
+    assert replies()[0].removeprefix("😂 ") in JOKES
+
+    # --- Mot interdit du jour ---
+    await db.set_setting("motinterdit_on", True)
+    await db.set_setting("motinterdit", {"date": db.today(), "word": "pizza", "found_by": None})
+    await send(ADMIN, ".motinterdit", chat=ADMIN["id"])
+    assert "pizza" in replies()[0], "l'admin doit voir le mot en privé"
+    await send(NOUSER, ".motinterdit")
+    assert "pizza" not in replies()[0], "le mot ne doit pas fuiter dans le groupe"
+    session.status[NOUSER["id"]] = "member"
+    await send(NOUSER, "on se fait une Pizza ce soir ?")
+    assert any("BOOM" in t for t in replies()) and session.of(RestrictChatMember)
+    assert (await db.last_action(NOUSER["id"], "jail"))["reason"] == "mot interdit"
+    await send(VICTIM, "moi aussi je veux de la pizza")
+    assert not any("BOOM" in t for t in replies()), "le mot ne doit exploser qu'une fois par jour"
+    await send(VICTIM, ".motinterdit")
+    assert "Déjà trouvé" in replies()[0]
+    await send(RANDOM, ".motinterdit off")
+    assert await db.get_setting("motinterdit_on"), "un membre a désactivé le mot interdit"
+    await db.set_setting("motinterdit_on", False)
+
+    # --- Roulette ---
+    games.random.randint, real_randint = (lambda a, b: 1), games.random.randint
+    try:
+        session.status[VICTIM["id"]] = "member"
+        await send(VICTIM, "/roulette")
+        assert any("PAN" in t for t in replies()) and session.of(RestrictChatMember)
+        await send(ADMIN, "/roulette")
+        assert any("gilet pare-balles" in t for t in replies()) and not session.of(RestrictChatMember)
+    finally:
+        games.random.randint = real_randint
+    games.random.randint, real_randint = (lambda a, b: 4), games.random.randint
+    try:
+        utils._cooldowns.clear()
+        await send(VICTIM, "/roulette")
+        assert "clic" in replies()[0] and not session.of(RestrictChatMember)
+    finally:
+        games.random.randint = real_randint
+    await send(NOUSER, ".jeux off")
+    assert await db.get_setting("jeux", True), "un membre a coupé les jeux"
+    await send(ADMIN, ".jeux off")
+    utils._cooldowns.clear()
+    await send(VICTIM, "/roulette")
+    assert "désactivés" in replies()[0]
+    await send(ADMIN, ".jeux on")
+
+    # --- Duel ---
+    utils._cooldowns.clear()
+    await send(RANDOM, f"/duel {VICTIM['id']}")
+    duel_data = session.of(SendMessage)[0].reply_markup.inline_keyboard[0][0].callback_data
+    await click(NOUSER, duel_data)
+    assert session.of(AnswerCallbackQuery)[0].show_alert and not session.of(EditMessageText)
+    games.random.choice, real_choice = (lambda options: options[0]), games.random.choice
+    try:
+        session.status[RANDOM["id"]] = "member"
+        await click(VICTIM, duel_data)
+        assert session.of(RestrictChatMember)[0].user_id == RANDOM["id"], "le perdant (challenger) doit être mute"
+        assert "Duel" in session.of(EditMessageText)[0].text
+    finally:
+        games.random.choice = real_choice
+    await click(VICTIM, duel_data.replace("duel:ok:", "duel:no:"))
+    assert "Poule mouillée" in session.of(EditMessageText)[0].text
+    old = duel_data.rsplit(":", 1)[0] + ":1000"
+    await click(VICTIM, old)
+    assert "expiré" in session.of(EditMessageText)[0].text
+
+    # --- Prison ---
+    await send(VICTIM, "/prison")
+    assert "haute sécurité" in replies()[0] and "🎮" in replies()[0], replies()
+
+    # --- Tirages du jour ---
+    utils._cooldowns.clear()
+    await send(VICTIM, "/couple")
+    first_couple = replies()[0]
+    assert "Couple du jour" in first_couple
+    utils._cooldowns.clear()
+    await send(NOUSER, "/couple")
+    assert replies()[0].split("\n")[1] == first_couple.split("\n")[1], "le couple doit rester le même toute la journée"
+    utils._cooldowns.clear()
+    await send(VICTIM, "/elu")
+    assert "boloss du jour" in replies()[0]
+    utils._cooldowns.clear()
+    await send(VICTIM, f"/love {RANDOM['id']}")
+    love = replies()[0]
+    utils._cooldowns.clear()
+    await send(VICTIM, f"/love {RANDOM['id']}")
+    assert "%" in love and replies()[0] == love, "le score d'amour doit être fixe pour la journée"
+    utils._cooldowns.clear()
+    await send(VICTIM, "/qi")
+    assert "QI de" in replies()[0]
+
+    # --- Hack, clash, moqueur ---
+    await send(VICTIM, f"/hack {RANDOM['id']}")
+    edits = session.of(EditMessageText)
+    assert len(edits) == len(HACK_STEPS) and "terminé" in edits[-1].text
+    utils._cooldowns.clear()
+    await send(VICTIM, f"/clash {RANDOM['id']}")
+    assert "espèce de" in replies()[0]
+    target_msg = await send(RANDOM, "tu fais quoi")
+    utils._cooldowns.clear()
+    await send(VICTIM, "/moqueur", reply_to=target_msg)
+    assert any("tU fAiS qUoI" in t for t in replies()), replies()
+
+    # --- Livre d'or ---
+    perle = await send(RANDOM, "les pâtes à l'eau froide c'est meilleur")
+    utils._cooldowns.clear()
+    await send(VICTIM, "/citer", reply_to=perle)
+    assert "Citation <b>#1</b>" in replies()[0]
+    utils._cooldowns.clear()
+    await send(VICTIM, "/citer", reply_to=perle)
+    assert "Déjà" in replies()[0]
+    await send(NOUSER, "/citation")
+    assert "pâtes à l&#x27;eau froide" in replies()[0] and "(#1)" in replies()[0]
+    await send(NOUSER, f"/citation {RANDOM['id']}")
+    assert "pâtes" in replies()[0]
+    await send(NOUSER, "/delcitation 1")
+    assert not await db.get_quote(1) is None, "un membre a supprimé une citation"
+    await send(ADMIN, "/delcitation 1")
+    assert await db.get_quote(1) is None
+
+    # --- Top des bavards ---
+    await send(VICTIM, "/top")
+    assert "Top des bavards" in replies()[0] and "Pipelette en chef" in replies()[0]
+
+    # --- Anniversaires ---
+    await send(VICTIM, "/anniv 31/02")
+    assert "Format" in replies()[0]
+    today = datetime.now(cfg.tz)
+    await send(VICTIM, f"/anniv {today.day}/{today.month}")
+    assert "Noté" in replies()[0]
+    await send(NOUSER, "/anniversaires")
+    assert "aujourd'hui" in replies()[0]
+    session.calls.clear()
+    await memory.wish_birthdays(bot, db, cfg)
+    assert any("Joyeux anniversaire" in t for t in replies())
+    session.calls.clear()
+    await memory.wish_birthdays(bot, db, cfg)
+    assert not replies(), "anniversaire souhaité deux fois le même jour"
+
+    # --- Flocko ---
+    await send(VICTIM, "/flocko")
+    assert "Taux de flocko" in replies()[0]
+    first = await db.get_flocko(VICTIM["id"])
+    await send(VICTIM, ".flocko")
+    assert "Prochain tirage dans" in replies()[0]
+    await db.conn.execute("UPDATE flocko SET last_at = last_at - 13 * 3600, best = 0 WHERE user_id = ?", (VICTIM["id"],))
+    await db.conn.commit()
+    await send(VICTIM, "/flocko")
+    after = await db.get_flocko(VICTIM["id"])
+    assert after["rolls"] == 2 and after["best"] >= after["last"] and after["last_at"] >= first["last_at"]
+    # Le record ne baisse jamais
+    await db.save_flocko(VICTIM["id"], 100)
+    await db.save_flocko(VICTIM["id"], 3)
+    assert (await db.get_flocko(VICTIM["id"]))["best"] == 100
+    for user_id in range(700000, 700014):
+        session.users[user_id] = {"id": user_id, "is_bot": False, "first_name": f"Joueur {user_id % 100}"}
+        await db.track_user(User(**session.users[user_id]), active=False)
+        await db.save_flocko(user_id, user_id % 97)
+    utils._cooldowns.clear()
+    await send(NOUSER, "/topflocko")
+    photo = session.of(SendPhoto)[0]
+    assert photo.photo.data.startswith(b"\x89PNG") and "Top flocko" in photo.caption
+    buttons = photo.reply_markup.inline_keyboard[0]
+    assert buttons[0].text == "⬅️ Suivant" and buttons[0].callback_data == "flocko:2"
+    await click(NOUSER, "flocko:2")
+    media = [c for c in session.calls if type(c).__name__ == "EditMessageMedia"]
+    assert media and media[0].media.media.data.startswith(b"\x89PNG")
+    assert media[0].reply_markup.inline_keyboard[0][-1].text == "Précédent ➡️"
+
+    # --- Menu « / » de Telegram ---
+    session.calls.clear()
+    await commands.sync_commands(bot, cfg, db)
+    menus = [c for c in session.calls if type(c).__name__ == "SetMyCommands"]
+    public = next(c for c in menus if type(c.scope).__name__ == "BotCommandScopeDefault")
+    full = next(c for c in menus if type(c.scope).__name__ == "BotCommandScopeChatMember")
+    assert len(full.commands) > len(public.commands) and not any(c.command == "ban" for c in public.commands)
+    assert all(len(c.commands) <= 100 for c in menus)
+    await send(ADMIN, f".mod {RANDOM['id']}")
+    assert any(type(c).__name__ == "SetMyCommands" for c in session.calls)
+    await send(ADMIN, f".unmod {RANDOM['id']}")
+    assert any(type(c).__name__ == "DeleteMyCommands" for c in session.calls)
+
+    # --- Bienvenue : variantes au hasard ---
+    await send(ADMIN, ".welcome reset")
+    conf = await welcome.get_welcome(db)
+    assert conf["texts"] == welcome.DEFAULT_TEXTS
+    await send(ADMIN, ".welcome add Coucou {name}, installe-toi !")
+    assert len((await welcome.get_welcome(db))["texts"]) == len(welcome.DEFAULT_TEXTS) + 1
+    await send(ADMIN, ".welcome list")
+    assert "Coucou" in replies()[0]
+    await send(ADMIN, ".welcome del 1")
+    assert len((await welcome.get_welcome(db))["texts"]) == len(welcome.DEFAULT_TEXTS)
+    picks = [welcome.pick_text(conf["texts"]) for _ in range(30)]
+    assert all(a != b for a, b in zip(picks, picks[1:])), "deux fois le même message d'affilée"
+    await send(ADMIN, ".welcome on")
+    session.calls.clear()
+    newcomer = {"id": 777777, "is_bot": False, "first_name": "Petit", "last_name": "Nouveau"}
+    await dp.feed_update(bot, Update(update_id=next(counter), chat_member={
+        "chat": {"id": CHAT, "type": "supergroup", "title": "feurchat"}, "from": newcomer, "date": int(time.time()),
+        "old_chat_member": {"status": "left", "user": newcomer},
+        "new_chat_member": {"status": "member", "user": newcomer},
+    }))
+    greeting = session.of(SendMessage)[0].text
+    assert "Petit Nouveau" in greeting and "{" not in greeting, greeting
+    # Ancien format (un seul texte personnalisé) : gardé parmi les variantes
+    await db.set_setting("welcome", {"enabled": True, "text": "Yo {name}", "media_type": None, "media_id": None})
+    assert "Yo {name}" in (await welcome.get_welcome(db))["texts"]
+
     # Tout le HTML envoyé (aide comprise) doit être valide
-    for _, text in help_module.SECTIONS.values():
+    for _, _, text in help_module.SECTIONS.values():
         check_html(text)
-    check_html(help_module.MENU)
-    check_html(help_module.MOD_MENU)
-    check_html(help_module.MEMBER_HELP)
+    for role in help_module.ROLES:
+        check_html(help_module._menu("Flo <3", role)[0])
+    for text in welcome.DEFAULT_TEXTS:
+        check_html(text)
 
     print("✅ Tous les tests passent")
 

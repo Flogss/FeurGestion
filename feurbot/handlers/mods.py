@@ -11,6 +11,7 @@ from ..config import Config
 from ..db import Database, full_name
 from ..filters import IsAdmin, IsMember
 from ..targets import Target, resolve_target
+from ..commands import set_mod_commands
 from ..utils import PREFIXES, format_date, mention, send_log
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ async def cmd_mod(message: Message, command: CommandObject, bot: Bot, db: Databa
         return
 
     await db.add_action("mod", target.id, message.from_user.id)
+    await set_mod_commands(bot, cfg, target.id, True)
     log.info("%s nommé modo par %s", target.id, message.from_user.id)
     await message.reply(
         f"🛡 <b>{target.mention} est maintenant modo !</b>\n"
@@ -65,6 +67,7 @@ async def cmd_unmod(message: Message, command: CommandObject, bot: Bot, db: Data
         return
 
     await db.add_action("unmod", target.id, message.from_user.id)
+    await set_mod_commands(bot, cfg, target.id, False)
     log.info("%s n'est plus modo (par %s)", target.id, message.from_user.id)
     await message.reply(
         f"🪖 {target.mention} n'est plus modo.\n<i>Retour au rang de simple mortel. Merci pour tes services.</i>"

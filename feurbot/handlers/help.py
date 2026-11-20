@@ -1,8 +1,12 @@
 """Aide à boutons, /start, et répliques quand un non-admin joue au chef."""
 
+import random
+import re
+from html import escape
+
 from aiogram import F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..config import Config
@@ -21,153 +25,208 @@ ADMIN_ONLY = (
     "save", "note", "clear", "delnote", "filter", "filtre", "stop", "delfilter", "setrules", "setregles",
     "lock", "verrou", "unlock", "deverrou", "locks", "verrous",
     "purge", "del", "suppr", "pin", "epingle", "unpin", "desepingle", "feur",
-    "mod", "modo", "promote", "unmod", "unmodo", "demod", "demote",
+    "mod", "modo", "promote", "unmod", "unmodo", "demod", "demote", "jeux", "delcitation", "uncite",
 )
 
-MENU = (
-    "<b>🤖 FeurBot — panneau de contrôle</b>\n"
-    "Le bot officiel de feurchat : de l'ordre, des logs, et des blagues nulles.\n"
-    "Choisis une catégorie 👇\n\n"
-    "<i>👑 = réservé aux admins du bot. Préfixes : <code>.</code> <code>!</code> <code>/</code> — "
-    "ça marche aussi en privé avec moi.</i>"
-)
-MOD_MENU = (
-    "<b>🛡 FeurBot — espace modo</b>\n"
-    "Tu peux sanctionner, avertir, faire le ménage et consulter les fiches. "
-    "La config du bot reste aux admins (👑).\n"
-    "Choisis une catégorie 👇"
-)
+ALL, STAFF, ADMIN = "all", "staff", "admin"
 
+# Clé -> (bouton, public, texte). Les /commandes sont cliquables dans Telegram.
 SECTIONS = {
-    "moderation": (
-        "🔨 Modération",
-        "<b>🔨 Modération</b> — en réponse à un message, ou avec <code>@pseudo</code> / ID\n"
-        "<code>.ban [durée] [raison]</code> — bannir (sans durée = définitif)\n"
-        "<code>.deban</code> — débannir\n"
-        "<code>.mute [durée] [raison]</code> — rendre muet (sans durée = définitif)\n"
-        "<code>.demute</code> — rendre la parole\n"
-        "<code>.kick [raison]</code> — expulser (il peut revenir avec un lien)\n\n"
-        "Durées : <code>30s</code> <code>10m</code> <code>1h</code> <code>1d</code>/<code>1j</code> <code>1w</code>, "
-        "combinables : <code>1h30m</code>. Raison et durée facultatives.\n"
-        "Au ban / mute, ta commande et le message visé disparaissent, et un bouton « ↩️ Annuler » apparaît.\n"
-        "<i>Ex : <code>.mute @pseudo 1h a dit « quoi » sans prévenir</code></i>",
-    ),
-    "warns": (
-        "⚠️ Warns",
-        "<b>⚠️ Warns</b> — en réponse, ou avec <code>@pseudo</code> / ID\n"
-        "<code>.warn [raison]</code> — avertir (bouton « 🧽 Retirer »)\n"
-        "<code>.unwarn</code> — retirer le dernier warn\n"
-        "<code>.resetwarns</code> — tout effacer\n"
-        "<code>.warns</code> — voir les warns (tout le monde peut)\n"
-        "👑 <code>.warnlimit 3</code> — nombre de warns avant la sanction\n"
-        "👑 <code>.warnaction mute|ban|kick</code> — la sanction (mute = 24h)\n"
-        "<i>À la limite, la sanction tombe toute seule et le compteur repart à zéro.</i>",
-    ),
-    "notes": (
-        "📝 Notes & filtres",
-        "<b>📝 Notes, filtres et règles</b>\n"
-        "<code>.save nom texte</code> — créer une note (ou en réponse à un message / média)\n"
-        "<code>#nom</code> ou <code>.get nom</code> — l'afficher (tout le monde)\n"
-        "<code>.notes</code> — la liste · <code>.clear nom</code> — supprimer\n\n"
-        "<code>.filter mot réponse</code> — je réponds tout seul quand quelqu'un écrit le mot "
-        "(<code>\"plusieurs mots\"</code> entre guillemets)\n"
-        "<code>.filters</code> — la liste · <code>.stop mot</code> — supprimer\n\n"
-        "<code>.setrules texte</code> — définir les règles · <code>.rules</code> — les afficher\n"
-        "Variables : <code>{mention}</code> <code>{name}</code> <code>{username}</code> <code>{id}</code> "
-        "<code>{chat}</code> <code>{count}</code>",
-    ),
-    "verrous": (
-        "🔒 Verrous",
-        "<b>🔒 Verrous</b> — <code>.lock type</code> / <code>.unlock type</code> / <code>.locks</code>\n"
-        "<code>liens</code> — je supprime les liens et pubs des non-admins (PUB = MUTE, tout ça)\n"
-        "<code>transferts</code> — je supprime les messages transférés\n"
-        "<code>medias</code> · <code>stickers</code> · <code>sondages</code> · <code>apercus</code> — coupe ces droits\n"
-        "<code>tout</code> — groupe en lecture seule (pratique la nuit)\n"
-        "<i>Les admins ne sont jamais bloqués. Privilège de l'âge.</i>",
-    ),
-    "bienvenue": (
-        "👋 Bienvenue",
-        "<b>👋 Bienvenue</b>\n"
-        "<code>.welcome</code> — voir le message actuel\n"
-        "<code>.welcome texte</code> — changer le texte (garde le média)\n"
-        "Photo / GIF / vidéo avec la légende <code>.welcome texte</code>, ou en réponse à un média\n"
-        "<code>.welcome nomedia</code> — retirer le média\n"
-        "<code>.welcome on</code> / <code>off</code> · <code>.welcome reset</code>\n"
-        "Variables : <code>{mention}</code> <code>{name}</code> <code>{username}</code> <code>{id}</code> "
-        "<code>{chat}</code> <code>{count}</code>",
-    ),
-    "infos": (
-        "🔎 Infos & outils",
-        "<b>🔎 Infos et outils</b>\n"
-        "<code>.info [@pseudo|ID]</code> — fiche : sanctions, warns, historique des pseudos\n"
-        "<code>.logs [nombre]</code> — dernières sanctions\n"
-        "👑 <code>.sangmata on|off</code> — annoncer dans le groupe quand quelqu'un change de pseudo\n"
-        "<code>.purge</code> — en réponse : efface tout jusqu'à ta commande\n"
-        "<code>.del</code> — supprime le message visé\n"
-        "<code>.pin [silence]</code> / <code>.unpin</code> — épingler / désépingler\n"
-        "<code>.id</code> · <code>.ping</code> · <code>.report</code> — pour tout le monde",
-    ),
-    "modos": (
-        "🛡 Modos",
-        "<b>🛡 Modos</b> — 👑 réservé aux admins du bot\n"
-        "<code>.mod @pseudo|ID</code> — nommer quelqu'un modo (ou en réponse)\n"
-        "<code>.unmod @pseudo|ID</code> — lui retirer\n"
-        "<code>.mods</code> — voir l'équipe (tout le monde)\n\n"
-        "Un modo peut : ban, mute, kick, warn, déban / démute, purge, del, pin, <code>.info</code>, "
-        "<code>.logs</code> et les boutons « Annuler ».\n"
-        "Il ne peut pas : toucher à la config du bot, ni sanctionner un autre modo ou un admin.\n"
-        "<i>Ce n'est pas un admin Telegram : si tu verrouilles tout le groupe, il ne peut plus écrire non plus.</i>",
+    "jeux": (
+        "🎮 Jeux",
+        ALL,
+        "<b>🎮 Jeux</b>\n"
+        "/flocko — ton taux de flocko, nouveau tirage toutes les 12 h\n"
+        "/topflocko — le classement en image (records de tous les temps, jamais remis à zéro)\n"
+        "/roulette — 1 chance sur 6 de prendre 1 minute de mute\n"
+        "/duel <i>@pseudo</i> — l'autre accepte, le perdant est mute 1 minute\n"
+        "/prison — qui est mute ou banni en ce moment\n"
+        "/motinterdit — un mot secret par jour : celui qui le dit explose 💥\n"
+        "/feurboard — les plus grosses victimes du feur",
     ),
     "fun": (
         "🎉 Fun",
+        ALL,
         "<b>🎉 Fun</b>\n"
-        "👑 <code>.feur on|off</code> — réponses auto : quoi → feur, oui → stiti, non → bril, hein → deux…\n"
-        "<code>.blague</code> — une blague nulle (pléonasme)\n"
-        "<code>.pileouface</code> · <code>.de</code> · <code>.dard</code> · <code>.slot</code> · "
-        "<code>.foot</code> · <code>.basket</code> · <code>.bowling</code>\n"
-        "<code>.boule question</code> — la boule magique, fiabilité douteuse\n"
-        "<code>.quoi</code> — devine.",
+        "/blague — une blague nulle (pléonasme)\n"
+        "/couple — le couple du jour · /elu — le boloss du jour\n"
+        "/love <i>@a @b</i> — compatibilité amoureuse (fixe pour la journée, pas de triche)\n"
+        "/qi <i>@pseudo</i> — le QI du jour\n"
+        "/hack <i>@pseudo</i> — piratage (très) faux, en direct\n"
+        "/clash <i>@pseudo</i> — une insulte vieille France\n"
+        "/moqueur — en réponse : répète le message en mOdE mOqUeUr\n"
+        "/pileouface · /de · /dard · /slot · /foot · /basket · /bowling\n"
+        "/boule <i>question</i> — la boule magique, fiabilité douteuse\n"
+        "/quoi — devine.\n\n"
+        "<i>Et je réponds tout seul : quoi → feur, oui → stiti, non → bril, hein → deux / apagnan…</i>",
+    ),
+    "memoire": (
+        "📜 Mémoire",
+        ALL,
+        "<b>📜 La mémoire du groupe</b>\n"
+        "/citer — en réponse : grave le message dans le livre d'or\n"
+        "/citation — une perle au hasard · <i>/citation @pseudo</i> · <i>/citation 12</i>\n"
+        "/top — les bavards de la semaine (et le fantôme)\n"
+        "/anniv <i>JJ/MM</i> — je te le souhaite à minuit, devant tout le monde\n"
+        "/anniversaires — les prochains à fêter",
+    ),
+    "pratique": (
+        "🙋 Pratique",
+        ALL,
+        "<b>🙋 Pratique</b>\n"
+        "/rules — les règles (lis-les, vraiment)\n"
+        "/notes — les notes du groupe · <i>#nom</i> pour en afficher une\n"
+        "/afk <i>[raison]</i> — t'absenter (ou écris « brb »)\n"
+        "/report — en réponse : prévenir les admins (ou écris @admin)\n"
+        "/warns — ton casier judiciaire\n"
+        "/mods — l'équipe de modération\n"
+        "/id · /ping",
+    ),
+    "moderation": (
+        "🔨 Modération",
+        STAFF,
+        "<b>🔨 Modération</b> — en réponse à un message, ou avec <i>@pseudo</i> / ID\n"
+        "/ban <i>[durée] [raison]</i> — bannir (sans durée = définitif)\n"
+        "/deban — débannir\n"
+        "/mute <i>[durée] [raison]</i> — rendre muet (sans durée = définitif)\n"
+        "/demute — rendre la parole\n"
+        "/kick <i>[raison]</i> — expulser (il peut revenir avec un lien)\n\n"
+        "Durées : <code>30s</code> <code>10m</code> <code>1h</code> <code>1d</code>/<code>1j</code> <code>1w</code>, "
+        "combinables : <code>1h30m</code>.\n"
+        "Au ban / mute, ta commande et le message visé disparaissent, et un bouton « ↩️ Annuler » apparaît.\n"
+        "<i>Ex : /mute @pseudo 1h a dit « quoi » sans prévenir</i>",
+    ),
+    "warns": (
+        "⚠️ Warns",
+        STAFF,
+        "<b>⚠️ Warns</b> — en réponse, ou avec <i>@pseudo</i> / ID\n"
+        "/warn <i>[raison]</i> — avertir (bouton « 🧽 Retirer »)\n"
+        "/unwarn — retirer le dernier · /resetwarns — tout effacer\n"
+        "/warns — voir les warns (tout le monde peut)\n"
+        "👑 /warnlimit <i>3</i> — warns avant la sanction · 👑 /warnaction <i>mute|ban|kick</i>\n"
+        "<i>À la limite, la sanction tombe toute seule (mute = 24 h) et le compteur repart à zéro.</i>",
+    ),
+    "outils": (
+        "🔎 Infos & outils",
+        STAFF,
+        "<b>🔎 Infos et outils</b>\n"
+        "/info <i>[@pseudo|ID]</i> — fiche : sanctions, warns, historique des pseudos\n"
+        "/logs <i>[nombre]</i> — dernières sanctions\n"
+        "/purge — en réponse : efface tout jusqu'à ta commande\n"
+        "/del — en réponse : supprime le message\n"
+        "/pin <i>[silence]</i> · /unpin — épingler / désépingler\n"
+        "/delcitation <i>12</i> — retirer une citation du livre d'or",
+    ),
+    "notes": (
+        "📝 Notes & filtres",
+        ADMIN,
+        "<b>📝 Notes, filtres et règles</b>\n"
+        "/save <i>nom texte</i> — créer une note (ou en réponse à un message / média)\n"
+        "/clear <i>nom</i> — supprimer une note\n"
+        "/filter <i>mot réponse</i> — je réponds tout seul quand quelqu'un écrit le mot "
+        "(<i>\"plusieurs mots\"</i> entre guillemets)\n"
+        "/filters — la liste · /stop <i>mot</i> — supprimer\n"
+        "/setrules <i>texte</i> — définir les règles\n"
+        "Variables : <code>{mention}</code> <code>{name}</code> <code>{username}</code> <code>{id}</code> "
+        "<code>{chat}</code> <code>{count}</code>",
+    ),
+    "bienvenue": (
+        "👋 Bienvenue",
+        ADMIN,
+        "<b>👋 Bienvenue</b> — une variante au hasard à chaque arrivée\n"
+        "/welcome — état et aperçu\n"
+        "<i>/welcome list</i> — les variantes · <i>/welcome add texte</i> — en ajouter une · "
+        "<i>/welcome del 3</i> — en retirer une\n"
+        "<i>/welcome texte</i> — tout remplacer par un seul texte\n"
+        "Photo / GIF / vidéo avec la légende <i>/welcome</i> (ou en réponse à un média) — ajoute le média\n"
+        "<i>/welcome nomedia</i> · <i>/welcome on|off</i> · <i>/welcome reset</i>\n"
+        "Variables : <code>{mention}</code> <code>{name}</code> <code>{username}</code> <code>{count}</code> "
+        "<code>{chat}</code>",
+    ),
+    "verrous": (
+        "🔒 Verrous",
+        ADMIN,
+        "<b>🔒 Verrous</b> — /lock <i>type</i> · /unlock <i>type</i> · /locks\n"
+        "<code>liens</code> — je supprime les liens et pubs (PUB = MUTE, tout ça)\n"
+        "<code>transferts</code> — je supprime les messages transférés\n"
+        "<code>medias</code> · <code>stickers</code> · <code>sondages</code> · <code>apercus</code> — coupe ces droits\n"
+        "<code>tout</code> — groupe en lecture seule\n"
+        "<i>Admins et modos ne sont jamais bloqués par les suppressions.</i>",
+    ),
+    "modos": (
+        "🛡 Modos",
+        ADMIN,
+        "<b>🛡 Modos</b>\n"
+        "/mod <i>@pseudo|ID</i> — nommer modo (ou en réponse) · /unmod — retirer\n"
+        "/mods — voir l'équipe\n\n"
+        "Un modo peut : ban, mute, kick, warn, déban, démute, purge, del, pin, /info, /logs et les boutons.\n"
+        "Il ne peut pas : configurer le bot, ni sanctionner un autre modo ou un admin.\n"
+        "<i>Ce n'est pas un admin Telegram : avec /lock tout, il ne peut plus écrire non plus.</i>",
+    ),
+    "reglages": (
+        "⚙️ Réglages",
+        ADMIN,
+        "<b>⚙️ Réglages</b> — tout se règle avec <i>on</i> / <i>off</i>\n"
+        "/feur — réponses « quoi → feur », réactions 🤡 et titres du feurboard\n"
+        "/jeux — roulette et duels\n"
+        "/motinterdit <i>on|off</i> — le mot interdit du jour (en privé, je te le révèle)\n"
+        "/sangmata — annoncer les changements de pseudo dans le groupe\n"
+        "/warnlimit · /warnaction — la limite de warns",
     ),
 }
-
-MEMBER_HELP = (
-    "<b>🤖 FeurBot — le bot officiel de feurchat</b>\n"
-    "Ce que tu peux faire (le reste, c'est pour les admins 😌) :\n\n"
-    "<code>.rules</code> — les règles (lis-les, vraiment)\n"
-    "<code>.notes</code> · <code>#nom</code> — les notes du groupe\n"
-    "<code>.afk [raison]</code> — t'absenter (ou écris « brb »)\n"
-    "<code>.report</code> — en réponse à un message : prévenir les admins\n"
-    "<code>.warns</code> — ton casier judiciaire\n"
-    "<code>.mods</code> — l'équipe de modération\n"
-    "<code>.id</code> · <code>.ping</code>\n"
-    "<code>.blague</code> · <code>.pileouface</code> · <code>.de</code> · <code>.dard</code> · <code>.slot</code> · "
-    "<code>.foot</code> · <code>.basket</code> · <code>.bowling</code> · <code>.boule question</code>\n\n"
-    "Et dis « quoi » pour voir. 😏"
-)
+AUDIENCES = {ALL: (ALL,), STAFF: (ALL, STAFF), ADMIN: (ALL, STAFF, ADMIN)}
+ROLES = {ALL: "👤 membre", STAFF: "🛡 modo", ADMIN: "👑 admin du bot"}
+TIPS = [
+    "dis « quoi » et observe.",
+    "/flocko se recharge toutes les 12 h. Le record, lui, reste à vie.",
+    "réponds à une perle avec /citer pour l'immortaliser.",
+    "il y a un mot interdit aujourd'hui. Je dis ça, je dis rien.",
+    "/help <i>commande</i> pour l'aide d'une seule commande, ex : /help duel",
+    "/anniv 12/03 et je te le souhaite devant tout le monde.",
+    "/roulette n'a jamais tué personne. Enfin, 1 minute par-ci par-là.",
+]
 
 
-# Sections visibles par les modos (le reste ne concerne que les admins)
-MOD_SECTIONS = ("moderation", "warns", "infos", "fun")
-
-
-def _menu_keyboard(keys) -> InlineKeyboardMarkup:
-    buttons = [InlineKeyboardButton(text=SECTIONS[key][0], callback_data=f"help:{key}") for key in keys]
-    return InlineKeyboardMarkup(inline_keyboard=[buttons[i : i + 2] for i in range(0, len(buttons), 2)])
-
-
-async def _menu_for(user_id: int, cfg: Config, db: Database) -> tuple[str, InlineKeyboardMarkup | None]:
+async def _role(user_id: int, cfg: Config, db: Database) -> str:
     if user_id in cfg.admin_ids:
-        return MENU, _menu_keyboard(SECTIONS)
-    if await db.is_mod(user_id):
-        return MOD_MENU, _menu_keyboard(MOD_SECTIONS)
-    return MEMBER_HELP, None
+        return ADMIN
+    return STAFF if await db.is_mod(user_id) else ALL
 
 
-BACK = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Retour", callback_data="help:menu")]])
+def _visible(role: str) -> list[str]:
+    return [key for key, (_, audience, _) in SECTIONS.items() if audience in AUDIENCES[role]]
+
+
+def _menu(name: str, role: str) -> tuple[str, InlineKeyboardMarkup]:
+    count = len(_visible(role))
+    text = (
+        f"<b>🤖 FeurBot</b> — le bot officiel de feurchat\n"
+        f"Salut {escape(name)} ! Tu es {ROLES[role]}, voilà tes {count} rubriques 👇\n\n"
+        f"💡 <i>Astuce : {random.choice(TIPS)}</i>\n"
+        "<i>Les commandes marchent avec <code>/</code>, <code>.</code> ou <code>!</code>, ici ou en privé.</i>"
+    )
+    if role != ALL:
+        text += "\n<i>👑 = réservé aux admins du bot.</i>"
+    buttons = [InlineKeyboardButton(text=SECTIONS[key][0], callback_data=f"help:{key}") for key in _visible(role)]
+    return text, InlineKeyboardMarkup(inline_keyboard=[buttons[i : i + 2] for i in range(0, len(buttons), 2)])
+
+
+def _search(command: str, role: str) -> list[str]:
+    token = re.compile(rf"(?<![\w/])/{re.escape(command)}(?!\w)", re.I)
+    return [
+        line
+        for key in _visible(role)
+        for line in SECTIONS[key][2].split("\n")[1:]
+        if token.search(line)
+    ]
+
+
+BACK = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Retour au menu", callback_data="help:menu")]])
 
 
 async def send_help(message: Message, cfg: Config, db: Database) -> None:
-    text, keyboard = await _menu_for(message.from_user.id, cfg, db)
+    role = await _role(message.from_user.id, cfg, db)
+    text, keyboard = _menu(message.from_user.first_name, role)
     await message.answer(text, reply_markup=keyboard)
 
 
@@ -184,8 +243,16 @@ async def cmd_start(message: Message, cfg: Config, db: Database) -> None:
 
 
 @router.message(Command("help", "aide", prefix=PREFIXES, ignore_case=True), IsMember())
-async def cmd_help(message: Message, cfg: Config, db: Database) -> None:
-    await send_help(message, cfg, db)
+async def cmd_help(message: Message, command: CommandObject, cfg: Config, db: Database) -> None:
+    wanted = (command.args or "").strip().lstrip("./!").split("@")[0].lower()
+    if not wanted:
+        await send_help(message, cfg, db)
+        return
+    lines = _search(wanted, await _role(message.from_user.id, cfg, db))
+    if lines:
+        await message.reply(f"🔎 <b>Aide pour /{escape(wanted)}</b>\n" + "\n".join(lines))
+    else:
+        await message.reply(f"🤷 Je ne connais pas /{escape(wanted)}. Tape /help pour le menu complet.")
 
 
 @router.callback_query(F.data.startswith("help:"))
@@ -194,11 +261,15 @@ async def on_help(callback: CallbackQuery, cfg: Config, db: Database) -> None:
     if not isinstance(callback.message, Message):
         await callback.answer()
         return
+    role = await _role(callback.from_user.id, cfg, db)
     if key == "menu":
-        text, keyboard = await _menu_for(callback.from_user.id, cfg, db)
+        text, keyboard = _menu(callback.from_user.first_name, role)
         await callback.message.edit_text(text, reply_markup=keyboard)
     elif key in SECTIONS:
-        await callback.message.edit_text(SECTIONS[key][1], reply_markup=BACK)
+        if key not in _visible(role):
+            await callback.answer("🔒 Cette rubrique est réservée à l'équipe. Joli essai.", show_alert=True)
+            return
+        await callback.message.edit_text(SECTIONS[key][2], reply_markup=BACK)
     await callback.answer()
 
 

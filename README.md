@@ -3,16 +3,18 @@
 Le bot officiel de **feurchat** : modération, logs, warns, notes, verrous anti-pub… et des blagues nulles.
 Il répond « feur » quand on dit « quoi ». Évidemment.
 
-Python 3.13 + [aiogram](https://docs.aiogram.dev/) + SQLite. Tourne en long polling (pas de serveur web, pas de domaine),
-environ 180 Mo de RAM.
+Python 3.13 + [aiogram](https://docs.aiogram.dev/) + SQLite + Pillow (image du `/topflocko`).
+Tourne en long polling (pas de serveur web, pas de domaine).
 
 Fonctions inspirées de [MissKatyPyro](https://github.com/yasirarism/MissKatyPyro) (yasirarism), réécrites pour ce bot.
 
 ## Commandes
 
-Préfixes acceptés : `.` `!` `/`. Les commandes marchent aussi en privé avec le bot.
-`.help` affiche une aide à boutons (version admin) ou la liste des commandes publiques (membres).
-Un non-admin qui tente une commande d'admin se fait gentiment chambrer.
+Toutes les commandes marchent avec `/`, `.` ou `!`, dans le groupe ou en privé avec le bot.
+Le menu « / » de Telegram propose à chacun les commandes de son rôle (membre, modo, admin).
+
+`/help` ouvre un menu à boutons adapté au rôle de la personne (avec une astuce au hasard) ;
+`/help duel` donne l'aide d'une seule commande. Un non-admin qui tente une commande d'admin se fait gentiment chambrer.
 
 ### Rôles
 
@@ -91,18 +93,51 @@ Variables utilisables (notes, filtres, règles, bienvenue) : `{mention}` `{name}
 | `.afk [raison]` (ou « brb ») | S'absenter : le bot prévient ceux qui te mentionnent (tout le monde) |
 | `.id`, `.ping` | Tout le monde |
 
+### Le feur
+
+- Réponses automatiques (`/feur on|off`) : quoi → feur (ou quoicoubeh), et une fois sur deux oui → stiti,
+  non → bril, hein → deux / apagnan, comment → dant… (10 s minimum entre deux répliques)
+- « quoi (pas de feur) » → « Bien essayé. Feur. » ; quelqu'un qui écrit « feur » → « Tu fais mon travail ? »
+- Réactions : 🤡 sur les « quoi », 🤣 sur les « mdr ». Un message sur 500 reçoit un easter egg.
+- `/feurboard` : classement des « quoi », avec des titres débloqués à 10, 25, 50, 100 et 250.
+
+### Jeux
+
+| Commande | Effet |
+| --- | --- |
+| `/flocko` | Ton taux de flocko : un nouveau tirage toutes les 12 h |
+| `/topflocko` | Classement en image (records de tous les temps, jamais remis à zéro) ; ⬅️ page suivante, ➡️ page précédente |
+| `/roulette` | 1 chance sur 6 d'être mute 1 minute (les admins Telegram sont immunisés) |
+| `/duel @pseudo` | L'autre accepte avec un bouton, le perdant est mute 1 minute |
+| `/prison` | Qui est mute / banni en ce moment, avec le temps restant |
+| `/motinterdit` | Un mot secret par jour : le premier qui l'écrit explose (1 min de mute). L'admin le voit en privé |
+
+`/jeux on|off` coupe roulette et duels, `/motinterdit on|off` le mot interdit (admins).
+
 ### Fun
 
-- Réponses automatiques (`.feur on|off`) : quoi → feur, et une fois sur deux oui → stiti, non → bril,
-  hein → deux, comment → dant, qui → rikou… (10 s minimum entre deux répliques)
-- `.blague`, `.pileouface`, `.de`, `.dard`, `.slot`, `.foot`, `.basket`, `.bowling`, `.boule question`, `.quoi`
+- `/blague`, `/pileouface`, `/de`, `/dard`, `/slot`, `/foot`, `/basket`, `/bowling`, `/boule question`, `/quoi`
+- `/couple` et `/elu` : tirés parmi les actifs de la semaine, fixes pour la journée
+- `/love @a @b`, `/qi @pseudo` : scores fixes pour la journée (pas de triche)
+- `/hack @pseudo` (faux piratage animé), `/clash @pseudo` (insulte vieille France), `/moqueur` en réponse
+
+### Mémoire du groupe
+
+- `/citer` en réponse : grave le message dans le livre d'or ; `/citation`, `/citation @pseudo`, `/citation 12` ;
+  `/delcitation 12` (admins et modos)
+- `/top` : bavards des 7 derniers jours, avec titres et le « fantôme »
+- `/anniv JJ/MM`, `/anniv off`, `/anniversaires` : le bot souhaite les anniversaires à minuit dans le groupe
 
 ### Bienvenue
 
-- `.welcome` — voir l'état et un aperçu
-- `.welcome Salut {mention} !` — changer le texte (la mise en forme Telegram est gardée)
-- Photo / GIF / vidéo avec la légende `.welcome texte`, ou `.welcome texte` en réponse à un média
-- `.welcome nomedia`, `.welcome on` / `.welcome off`, `.welcome reset`
+À chaque arrivée, une variante est tirée au hasard (jamais deux fois la même d'affilée) et personnalisée
+avec le nom et le numéro du membre. 12 variantes au second degré par défaut.
+
+- `/welcome` — voir l'état et un aperçu
+- `/welcome list`, `/welcome add texte`, `/welcome del 3` — gérer les variantes
+- `/welcome Salut {mention} !` — tout remplacer par un seul texte (la mise en forme Telegram est gardée)
+- Photo / GIF / vidéo avec la légende `/welcome`, ou en réponse à un média — ajoute le média
+- `/welcome nomedia`, `/welcome on` / `/welcome off`, `/welcome reset`
 
 ## Logs
 

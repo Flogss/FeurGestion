@@ -112,13 +112,14 @@ EIGHTBALL = [
 ]
 
 # Dernier mot du message -> chute. Le « quoi » répond toujours, le reste une fois sur deux.
+QUOI_ANSWERS = ["feur", "feur", "feur", "feur 😏", "FEUR.", "feur. Désolé, c'est plus fort que moi.", "quoicoubeh"]
 FEUR_RULES = [
-    (re.compile(r"(?:quoi+|koi+|kwa+|quoa+|koa+)"), ["feur", "feur", "feur", "feur 😏", "FEUR.", "feur. Désolé, c'est plus fort que moi."]),
+    (re.compile(r"(?:quoi+|koi+|kwa+|quoa+|koa+)"), QUOI_ANSWERS),
     (re.compile(r"pourquoi+"), ["pour feur"]),
     (re.compile(r"oui+"), ["stiti 🐒"]),
     (re.compile(r"ouai+s?"), ["stern 🤠"]),
     (re.compile(r"non+"), ["bril"]),
-    (re.compile(r"hei+n+"), ["deux"]),
+    (re.compile(r"hei+n+"), ["deux", "apagnan"]),
     (re.compile(r"comment"), ["dant 🫡"]),
     (re.compile(r"qui+"), ["rikou"]),
     (re.compile(r"quand"), ["dide"]),
@@ -128,22 +129,203 @@ FEUR_RULES = [
     (re.compile(r"mais"), ["zon 🏠"]),
     (re.compile(r"a+h+"), ["bricot 🍑"]),
 ]
-_LAST_WORD = re.compile(r"[a-zàâçéèêëîïôûùüÿœæ]+")
+_WORD = re.compile(r"[a-zàâçéèêëîïôûùüÿœæ]+")
+_QUOI = FEUR_RULES[0][0]
+# « quoi (pas de feur) », « quoi sans feur »... : les petits malins
+_ANTI_FEUR = re.compile(r"\b(?:pas|sans|no|anti|stop|interdit)\s+(?:de\s+|d'|le\s+)?feur", re.I)
+_LAUGH = re.compile(r"\b(?:mdr+|ptdr+|xptdr+|lol+|mort de rire|jpp+)\b", re.I)
+
+
+class FeurResult:
+    def __init__(self, answer: str | None = None, is_quoi: bool = False, reaction: str | None = None) -> None:
+        self.answer = answer
+        self.is_quoi = is_quoi
+        self.reaction = reaction
+
+
+def analyze(text: str) -> FeurResult:
+    """Ce que le bot répond (et la réaction qu'il met) à un message ordinaire."""
+    lowered = text.lower()
+    words = _WORD.findall(lowered)
+    laugh = "🤣" if _LAUGH.search(lowered) else None
+    if not words:
+        return FeurResult(reaction=laugh)
+    last = words[-1]
+
+    if _ANTI_FEUR.search(lowered) and any(_QUOI.fullmatch(word) for word in words):
+        return FeurResult("Bien essayé. Feur. 😏", is_quoi=True, reaction="🤡")
+    if last == "feur":
+        return FeurResult("Tu fais mon travail maintenant ? 😤", reaction=laugh)
+    for index, (pattern, answers) in enumerate(FEUR_RULES):
+        if pattern.fullmatch(last):
+            if index == 0:
+                return FeurResult(random.choice(answers), is_quoi=True, reaction="🤡")
+            if random.random() < 0.5:
+                return FeurResult(random.choice(answers), reaction=laugh)
+            break
+    return FeurResult(reaction=laugh)
+
+
+def feur_reply(text: str) -> str | None:
+    """La chute à répondre si le message finit par un mot piège, sinon None."""
+    return analyze(text).answer
 
 
 def quip(kind: str) -> str:
     return random.choice(QUIPS[kind])
 
 
-def feur_reply(text: str) -> str | None:
-    """La chute à répondre si le message finit par un mot piège, sinon None."""
-    words = _LAST_WORD.findall(text.lower())
-    if not words:
-        return None
-    last = words[-1]
-    for index, (pattern, answers) in enumerate(FEUR_RULES):
-        if pattern.fullmatch(last):
-            if index > 0 and random.random() < 0.5:
-                return None
-            return random.choice(answers)
-    return None
+# Titres du feurboard : nombre de « quoi » -> titre
+FEUR_TITLES = {
+    10: "Victime certifiée 🎖",
+    25: "Client fidèle du feur 🛒",
+    50: "Abonné au feur 📰",
+    100: "Légende du quoi 🏆",
+    250: "Le quoi incarné 👑",
+}
+
+
+def feur_title(count: int) -> str:
+    title = "Innocent 😇"
+    for threshold, name in FEUR_TITLES.items():
+        if count >= threshold:
+            title = name
+    return title
+
+
+EASTER_EGGS = [
+    "ERREUR 404 : humour introuvable.",
+    "J'ai rien compris mais je rigole quand même. Ha. Ha.",
+    "Ce message a été analysé par mes soins : 3/20, peut mieux faire.",
+    "Je fais semblant de ne pas avoir lu ça.",
+    "Message signalé à la police du bon goût. 🚓",
+]
+
+# Mot interdit du jour : assez courant pour tomber, pas trop pour durer un peu
+FORBIDDEN_WORDS = [
+    "demain", "jamais", "vraiment", "travail", "manger", "dormir", "bizarre", "carrément", "frérot", "wesh",
+    "flemme", "sérieux", "chelou", "incroyable", "pizza", "école", "argent", "fatigué", "téléphone", "musique",
+    "match", "pote", "daron", "daronne", "chaud", "frère", "insta", "tiktok", "snap", "kebab", "mcdo", "cours",
+    "bac", "prof", "devoirs", "film", "série", "jeu", "console", "soirée", "voiture", "chien", "chat",
+]
+
+ROULETTE_SAFE = [
+    "🔫 *clic*… Rien. Tu vis. Pour l'instant.",
+    "🔫 *clic*… Ouf. Ta mère peut dormir tranquille.",
+    "🔫 *clic*… Chanceux. Retente, pour voir ?",
+    "🔫 *clic*… Le barillet t'aime bien. Lui.",
+]
+ROULETTE_DEAD = [
+    "💥 PAN ! {mention} est mort. 1 minute de silence. RIP.",
+    "💥 PAN ! {mention} a perdu. On se recueille 1 minute. 🕯",
+    "💥 PAN ! Et {mention} rejoint le cimetière des bavards pour 1 minute.",
+]
+ROULETTE_ARMORED = "💥 PAN ! … mais {mention} est admin : gilet pare-balles. C'est de la triche, mais c'est la vie."
+
+COUPLE_QUIPS = [
+    "Les bans de mariage sont publiés. Enfin, les bans tout court, on verra.",
+    "Ils ne le savent pas encore, mais c'est écrit.",
+    "Félicitations. Ou condoléances, au choix.",
+    "Le bot a parlé. Le bot ne se trompe jamais (sauf souvent).",
+]
+ELU_QUIPS = [
+    "Bravo, c'est mérité. Personne ne sait pourquoi, mais c'est mérité.",
+    "Une statue sera érigée en ton honneur. En carton.",
+    "Tu peux le mettre sur ton CV.",
+    "Le peuple a voté. Enfin, moi. Mais moi c'est le peuple.",
+]
+
+INSULT_NOUNS = [
+    "paltoquet", "faquin", "maraud", "malotru", "gougnafier", "olibrius", "foutriquet", "freluquet", "cuistre",
+    "butor", "goujat", "pignouf", "vaurien", "galopin", "bélître", "jean-foutre", "cornichon", "nigaud",
+    "sagouin", "zigoto", "malandrin", "gredin", "pleutre", "fripouille", "bougre d'âne", "va-nu-pieds",
+]
+INSULT_ADJECTIVES = [
+    "mal embouché", "de basse extraction", "à la manque", "en carton", "de pacotille", "mal dégrossi",
+    "sans vergogne", "à roulettes", "de compétition", "en promotion", "du dimanche", "au rabais", "sous-cuit",
+    "mal luné", "de seconde zone", "en solde", "périmé", "mal fini",
+]
+
+HACK_STEPS = [
+    "💻 Connexion au cerveau de {name}…",
+    "🔓 Contournement du pare-feu… 12 %",
+    "📂 Récupération de l'historique de recherche… 47 %",
+    "📸 Accès à la galerie (on a vu des choses)… 73 %",
+    "🧠 Analyse du cerveau… 99 % (ça a été rapide)",
+]
+HACK_RESULTS = [
+    "Historique de recherche : « comment dire quoi sans se prendre un feur »",
+    "Mot de passe : feur123",
+    "Dernière recherche : « est-ce que les admins me détestent »",
+    "Playlist la plus écoutée : « Musique d'ascenseur vol. 3 »",
+    "Dossier secret : 412 captures d'écran de feurchat",
+    "Note sur son téléphone : « penser à être drôle demain »",
+    "Recherche Google : « comment devenir modo de feurchat »",
+    "Brouillon jamais envoyé : « quoi ? »",
+]
+
+
+def love_comment(score: int) -> str:
+    if score <= 20:
+        return "💔 Aucun avenir. Même pas en amis."
+    if score <= 50:
+        return "🤝 Bons potes, restez-en là."
+    if score <= 80:
+        return "💕 Ça pourrait le faire. Avec beaucoup d'efforts."
+    if score < 100:
+        return "💘 Mariez-vous. Le bot sera témoin."
+    return "💍 Âmes sœurs. Même le bot est ému."
+
+
+def iq_comment(score: int) -> str:
+    if score < 50:
+        return "Comme une huître. Mais en moins brillant."
+    if score < 90:
+        return "Dans la moyenne… basse. Très basse."
+    if score < 130:
+        return "Normal. Désolé, c'est tout ce que j'ai."
+    if score < 170:
+        return "Brillant ! Suspect, même."
+    return "Génie. Ou bug du bot. Sûrement bug du bot."
+
+
+TOP_TITLES = [
+    "🥇 Pipelette en chef",
+    "🥈 Moulin à paroles",
+    "🥉 Bavard certifié",
+    "4️⃣ Clavier en surchauffe",
+    "5️⃣ Commentateur officiel",
+    "6️⃣ Toujours un truc à dire",
+    "7️⃣ Bavard du dimanche",
+    "8️⃣ Présent, mais discret",
+    "9️⃣ Figurant",
+    "🔟 Juste là pour la photo",
+]
+
+BIRTHDAY_LINES = [
+    "+1 an, -1 neurone. On t'aime (un peu).",
+    "T'as pris un an. Nous on a pris l'habitude de te supporter.",
+    "Souffle tes bougies, pas sur le gâteau des autres.",
+    "Encore un an de plus à dire « quoi ». Feur.",
+]
+
+MONTHS = [
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+]
+
+
+def flocko_comment(value: int) -> str:
+    if value == 0:
+        return "0 %. Pas une goutte de flocko. Impressionnant, dans l'autre sens."
+    if value <= 20:
+        return "Flocko en PLS. Va te reposer."
+    if value <= 40:
+        return "Flocko timide. Ça viendra. Peut-être."
+    if value <= 60:
+        return "Flocko dans la moyenne. Comme ta vie."
+    if value <= 80:
+        return "Ça flocko sérieusement, là. Respect."
+    if value < 100:
+        return "FLOCKO ULTIME. Les autres tremblent."
+    return "💯 100 % FLOCKO. Plus rien à prouver. Encadre-le."

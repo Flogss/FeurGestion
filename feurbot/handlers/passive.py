@@ -1,22 +1,30 @@
-"""Tous les messages qui ne sont pas des commandes : #notes, filtres, @admin et « quoi → feur »."""
+"""Tous les messages qui ne sont pas des commandes : mot interdit, #notes, filtres, @admin et « quoi → feur »."""
 
+import logging
+import random
 import re
 
 from aiogram import Bot, Router
-from aiogram.types import Message
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import Message, ReactionTypeEmoji
 
 from ..config import Config
 from ..db import Database
 from ..filters import InManagedChat
-from ..jokes import feur_reply
+from ..jokes import EASTER_EGGS, FEUR_TITLES, analyze
+from ..targets import Target
 from ..utils import on_cooldown
+from .games import check_forbidden_word
 from .notes import find_filter, send_snippet
 from .tools import report
+
+log = logging.getLogger(__name__)
 
 router = Router(name="passive")
 
 NOTE_TAG = re.compile(r"^#([\w-]{1,32})\b")
 ADMIN_CALL = re.compile(r"(?<!\w)@admins?\b", re.I)
+EASTER_EGG_CHANCE = 1 / 500
 
 
 @router.message(InManagedChat())
@@ -25,6 +33,9 @@ async def on_message(message: Message, bot: Bot, db: Database, cfg: Config) -> N
         return
     text = message.text or message.caption
     if not text:
+        return
+
+    if await check_forbidden_word(message, bot, db, cfg):
         return
 
     tag = NOTE_TAG.match(text)
@@ -43,6 +54,35 @@ async def on_message(message: Message, bot: Bot, db: Database, cfg: Config) -> N
         await send_snippet(message, row, bot, cfg)
         return
 
-    answer = feur_reply(text)
-    if answer and await db.get_setting("feur", True) and not on_cooldown(f"feur:{message.chat.id}", 10):
-        await message.reply(answer)
+    if await _feur(message, text, db):
+        return
+
+    if random.random() < EASTER_EGG_CHANCE:
+        await message.reply(random.choice(EASTER_EGGS))
+
+
+async def _feur(message: Message, text: str, db: Database) -> bool:
+    """Réactions, réplique « feur » et titres du feurboard. Retourne True si le bot a répondu."""
+    result = analyze(text)
+    enabled = await db.get_setting("feur", True)
+
+    count = await db.add_feur(message.from_user.id) if result.is_quoi else 0
+    if not enabled:
+        return False
+
+    if result.reaction:
+        try:
+            await message.react([ReactionTypeEmoji(emoji=result.reaction)])
+        except TelegramAPIError as exc:
+            log.debug("Réaction impossible : %s", exc)
+
+    if count in FEUR_TITLES:
+        await message.reply(
+            f"🏅 {Target.from_user(message.from_user).mention} débloque le titre « {FEUR_TITLES[count]} » "
+            f"avec {count} « quoi » au compteur. Feur.\n<i>Le classement complet : <code>.feurboard</code></i>"
+        )
+        return True
+    if result.answer and not on_cooldown(f"feur:{message.chat.id}", 10):
+        await message.reply(result.answer)
+        return True
+    return False

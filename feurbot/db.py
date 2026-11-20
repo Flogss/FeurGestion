@@ -1,6 +1,8 @@
 import json
 import os
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 from aiogram.types import User
@@ -68,6 +70,47 @@ CREATE TABLE IF NOT EXISTS snippets (
     PRIMARY KEY (kind, name)
 );
 
+-- Nombre de « quoi » dits par personne (le feurboard)
+CREATE TABLE IF NOT EXISTS feur_stats (
+    user_id INTEGER PRIMARY KEY,
+    count   INTEGER NOT NULL DEFAULT 0
+);
+
+-- Messages par personne et par jour (pour .top)
+CREATE TABLE IF NOT EXISTS activity (
+    user_id INTEGER NOT NULL,
+    day     TEXT NOT NULL,
+    count   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
+);
+
+-- Le livre d'or (.citer / .citation)
+CREATE TABLE IF NOT EXISTS quotes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    author_name TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    said_at     INTEGER NOT NULL,
+    message_id  INTEGER UNIQUE,
+    saved_by    INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS birthdays (
+    user_id INTEGER PRIMARY KEY,
+    day     INTEGER NOT NULL,
+    month   INTEGER NOT NULL
+);
+
+-- /flocko : dernier tirage et meilleur score de chacun (le classement ne se remet jamais à zéro)
+CREATE TABLE IF NOT EXISTS flocko (
+    user_id INTEGER PRIMARY KEY,
+    last    INTEGER NOT NULL,
+    last_at INTEGER NOT NULL,
+    best    INTEGER NOT NULL,
+    best_at INTEGER NOT NULL,
+    rolls   INTEGER NOT NULL DEFAULT 0
+);
+
 -- Modérateurs nommés avec .mod : ils peuvent sanctionner, pas configurer le bot
 CREATE TABLE IF NOT EXISTS mods (
     user_id  INTEGER PRIMARY KEY,
@@ -90,9 +133,14 @@ def full_name(first: str | None, last: str | None) -> str:
 
 
 class Database:
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, tz: ZoneInfo | None = None) -> None:
         self.path = path
+        self.tz = tz or ZoneInfo("UTC")
         self.conn: aiosqlite.Connection | None = None
+
+    def today(self, offset_days: int = 0) -> str:
+        """Date du jour (fuseau du groupe) au format AAAA-MM-JJ."""
+        return (datetime.now(self.tz) + timedelta(days=offset_days)).strftime("%Y-%m-%d")
 
     async def connect(self) -> None:
         directory = os.path.dirname(self.path)
@@ -160,6 +208,14 @@ class Database:
                 1 if active else 0,
             ),
         )
+        if active:
+            await self.conn.execute(
+                """
+                INSERT INTO activity(user_id, day, count) VALUES (?, ?, 1)
+                ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1
+                """,
+                (user.id, self.today()),
+            )
         await self.conn.commit()
         return change
 
@@ -376,3 +432,195 @@ class Database:
             """
         ) as cur:
             return list(await cur.fetchall())
+
+    async def active_users(self, days: int = 7) -> list[int]:
+        """Humains qui ont écrit dans les `days` derniers jours."""
+        since = int(time.time()) - days * 86400
+        async with self.conn.execute(
+            "SELECT user_id FROM users WHERE last_seen >= ? AND is_bot = 0 ORDER BY user_id", (since,)
+        ) as cur:
+            return [row["user_id"] for row in await cur.fetchall()]
+
+    # --- Feurboard ---
+
+    async def add_feur(self, user_id: int) -> int:
+        await self.conn.execute(
+            """
+            INSERT INTO feur_stats(user_id, count) VALUES (?, 1)
+            ON CONFLICT(user_id) DO UPDATE SET count = count + 1
+            """,
+            (user_id,),
+        )
+        await self.conn.commit()
+        return await self.feur_count(user_id)
+
+    async def feur_count(self, user_id: int) -> int:
+        async with self.conn.execute("SELECT count FROM feur_stats WHERE user_id = ?", (user_id,)) as cur:
+            row = await cur.fetchone()
+        return row["count"] if row else 0
+
+    async def feur_board(self, limit: int = 10) -> list[aiosqlite.Row]:
+        async with self.conn.execute(
+            """
+            SELECT f.user_id, f.count, u.first_name, u.last_name
+            FROM feur_stats f LEFT JOIN users u ON u.user_id = f.user_id
+            ORDER BY f.count DESC LIMIT ?
+            """,
+            (limit,),
+        ) as cur:
+            return list(await cur.fetchall())
+
+    # --- Activité (.top) ---
+
+    async def top_talkers(self, days: int = 7, limit: int = 10) -> list[aiosqlite.Row]:
+        async with self.conn.execute(
+            """
+            SELECT a.user_id, SUM(a.count) AS total, u.first_name, u.last_name
+            FROM activity a LEFT JOIN users u ON u.user_id = a.user_id
+            WHERE a.day >= ? GROUP BY a.user_id ORDER BY total DESC LIMIT ?
+            """,
+            (self.today(-(days - 1)), limit),
+        ) as cur:
+            return list(await cur.fetchall())
+
+    async def ghost(self, days: int = 7) -> aiosqlite.Row | None:
+        """La personne vue ce mois-ci qui a le moins parlé ces `days` derniers jours."""
+        async with self.conn.execute(
+            """
+            SELECT u.user_id, u.first_name, u.last_name,
+                   COALESCE((SELECT SUM(a.count) FROM activity a WHERE a.user_id = u.user_id AND a.day >= ?), 0) AS total
+            FROM users u WHERE u.is_bot = 0 AND u.last_seen >= ?
+            ORDER BY total ASC, u.last_seen ASC LIMIT 1
+            """,
+            (self.today(-(days - 1)), int(time.time()) - 30 * 86400),
+        ) as cur:
+            return await cur.fetchone()
+
+    # --- Citations ---
+
+    async def add_quote(
+        self, user_id: int, author_name: str, text: str, said_at: int, message_id: int, saved_by: int
+    ) -> int | None:
+        """Retourne le numéro de la citation, ou None si ce message est déjà cité."""
+        cur = await self.conn.execute(
+            """
+            INSERT OR IGNORE INTO quotes(user_id, author_name, text, said_at, message_id, saved_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, author_name, text, said_at, message_id, saved_by),
+        )
+        await self.conn.commit()
+        return cur.lastrowid if cur.rowcount else None
+
+    async def random_quote(self, user_id: int | None = None) -> aiosqlite.Row | None:
+        query = "SELECT * FROM quotes" + (" WHERE user_id = ?" if user_id else "") + " ORDER BY RANDOM() LIMIT 1"
+        async with self.conn.execute(query, (user_id,) if user_id else ()) as cur:
+            return await cur.fetchone()
+
+    async def get_quote(self, quote_id: int) -> aiosqlite.Row | None:
+        async with self.conn.execute("SELECT * FROM quotes WHERE id = ?", (quote_id,)) as cur:
+            return await cur.fetchone()
+
+    async def delete_quote(self, quote_id: int) -> bool:
+        cur = await self.conn.execute("DELETE FROM quotes WHERE id = ?", (quote_id,))
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def count_quotes(self) -> int:
+        async with self.conn.execute("SELECT COUNT(*) AS n FROM quotes") as cur:
+            return (await cur.fetchone())["n"]
+
+    # --- Anniversaires ---
+
+    async def set_birthday(self, user_id: int, day: int, month: int) -> None:
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO birthdays(user_id, day, month) VALUES (?, ?, ?)", (user_id, day, month)
+        )
+        await self.conn.commit()
+
+    async def get_birthday(self, user_id: int) -> aiosqlite.Row | None:
+        async with self.conn.execute("SELECT * FROM birthdays WHERE user_id = ?", (user_id,)) as cur:
+            return await cur.fetchone()
+
+    async def delete_birthday(self, user_id: int) -> bool:
+        cur = await self.conn.execute("DELETE FROM birthdays WHERE user_id = ?", (user_id,))
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def all_birthdays(self) -> list[aiosqlite.Row]:
+        async with self.conn.execute(
+            """
+            SELECT b.*, u.first_name, u.last_name
+            FROM birthdays b LEFT JOIN users u ON u.user_id = b.user_id
+            """
+        ) as cur:
+            return list(await cur.fetchall())
+
+    # --- Prison ---
+
+    async def prisoners(self) -> list[aiosqlite.Row]:
+        """Personnes dont la dernière action est un ban / mute (ou mute de jeu) encore en cours."""
+        now = int(time.time())
+        async with self.conn.execute(
+            """
+            SELECT a.*, u.first_name, u.last_name FROM actions a
+            LEFT JOIN users u ON u.user_id = a.user_id
+            WHERE a.id IN (
+                SELECT MAX(id) FROM actions
+                WHERE action IN ('ban', 'mute', 'jail', 'unban', 'unmute', 'kick')
+                GROUP BY user_id
+            )
+            AND a.action IN ('ban', 'mute', 'jail') AND (a.until IS NULL OR a.until > ?)
+            ORDER BY a.until IS NULL, a.until
+            """,
+            (now,),
+        ) as cur:
+            return list(await cur.fetchall())
+
+    # --- Flocko ---
+
+    async def get_flocko(self, user_id: int) -> aiosqlite.Row | None:
+        async with self.conn.execute("SELECT * FROM flocko WHERE user_id = ?", (user_id,)) as cur:
+            return await cur.fetchone()
+
+    async def save_flocko(self, user_id: int, value: int) -> aiosqlite.Row:
+        """Enregistre un tirage ; le record n'est remplacé que s'il est battu."""
+        now = int(time.time())
+        await self.conn.execute(
+            """
+            INSERT INTO flocko(user_id, last, last_at, best, best_at, rolls) VALUES (?, ?, ?, ?, ?, 1)
+            ON CONFLICT(user_id) DO UPDATE SET
+                last = excluded.last,
+                last_at = excluded.last_at,
+                best_at = CASE WHEN excluded.best > flocko.best THEN excluded.best_at ELSE flocko.best_at END,
+                best = MAX(flocko.best, excluded.best),
+                rolls = flocko.rolls + 1
+            """,
+            (user_id, value, now, value, now),
+        )
+        await self.conn.commit()
+        return await self.get_flocko(user_id)
+
+    async def flocko_board(self, offset: int, limit: int) -> list[aiosqlite.Row]:
+        async with self.conn.execute(
+            """
+            SELECT f.*, u.first_name, u.last_name FROM flocko f LEFT JOIN users u ON u.user_id = f.user_id
+            ORDER BY f.best DESC, f.best_at ASC LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ) as cur:
+            return list(await cur.fetchall())
+
+    async def flocko_players(self) -> int:
+        async with self.conn.execute("SELECT COUNT(*) AS n FROM flocko") as cur:
+            return (await cur.fetchone())["n"]
+
+    async def flocko_rank(self, user_id: int) -> int | None:
+        row = await self.get_flocko(user_id)
+        if row is None:
+            return None
+        async with self.conn.execute(
+            "SELECT COUNT(*) AS n FROM flocko WHERE best > ? OR (best = ? AND best_at < ?)",
+            (row["best"], row["best"], row["best_at"]),
+        ) as cur:
+            return (await cur.fetchone())["n"] + 1

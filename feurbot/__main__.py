@@ -6,17 +6,30 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from .app import build_dispatcher
+from .commands import sync_commands
 from .config import Config, load_config
 from .db import Database
-from .handlers import events
+from .handlers import events, memory
 
 log = logging.getLogger("feurbot")
 
 
-async def on_startup(bot: Bot, cfg: Config) -> None:
+_background: set[asyncio.Task] = set()
+
+
+async def on_startup(bot: Bot, cfg: Config, db: Database) -> None:
     me = await bot.me()
     log.info("Connecté en tant que @%s — groupe %s — admins %s", me.username, cfg.chat_id, sorted(cfg.admin_ids))
     await events.check_bot_rights(bot, cfg)
+    await sync_commands(bot, cfg, db)
+    task = asyncio.create_task(memory.birthday_loop(bot, db, cfg))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def on_shutdown() -> None:
+    for task in _background:
+        task.cancel()
 
 
 async def main() -> None:
@@ -24,12 +37,13 @@ async def main() -> None:
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
 
     cfg = load_config()
-    db = Database(cfg.db_path)
+    db = Database(cfg.db_path, cfg.tz)
     await db.connect()
 
     bot = Bot(cfg.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
     dp = build_dispatcher(cfg, db)
     dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
 
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
