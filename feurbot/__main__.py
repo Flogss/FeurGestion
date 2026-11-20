@@ -12,7 +12,7 @@ from .app import build_dispatcher
 from .commands import sync_commands
 from .config import Config, load_config
 from .db import Database
-from .handlers import events, memory
+from .handlers import backup, events, memory
 
 log = logging.getLogger("feurbot")
 
@@ -23,11 +23,14 @@ _background: set[asyncio.Task] = set()
 async def on_startup(bot: Bot, cfg: Config, db: Database) -> None:
     me = await bot.me()
     log.info("Connecté en tant que @%s — groupe %s — admins %s", me.username, cfg.chat_id, sorted(cfg.admin_ids))
+    stats = await db.stats()
+    log.info("Base %s : %s", db.path, ", ".join(f"{count} {table}" for table, count in stats.items()))
     await events.check_bot_rights(bot, cfg)
     await sync_commands(bot, cfg, db)
-    task = asyncio.create_task(memory.birthday_loop(bot, db, cfg))
-    _background.add(task)
-    task.add_done_callback(_background.discard)
+    for loop in (memory.birthday_loop(bot, db, cfg), backup.backup_loop(bot, db, cfg)):
+        task = asyncio.create_task(loop)
+        _background.add(task)
+        task.add_done_callback(_background.discard)
 
 
 async def on_shutdown() -> None:

@@ -152,6 +152,15 @@ avec le nom et le numéro du membre. 12 variantes au second degré par défaut.
 - Photo / GIF / vidéo avec la légende `/welcome`, ou en réponse à un média — ajoute le média
 - `/welcome nomedia`, `/welcome on` / `/welcome off`, `/welcome reset`
 
+## Données et sauvegardes
+
+- La base SQLite est sur un volume Railway (`/data`) : elle survit aux déploiements et aux redémarrages.
+- Au démarrage, le bot écrit dans les logs le nombre de lignes des tables principales.
+- Chaque nuit à 4 h, une sauvegarde part en silence dans la conversation privée de l'admin.
+- `/backup` : sauvegarde à la demande, envoyée en privé.
+- `/restore` en privé, en réponse à un fichier de sauvegarde : remet la base dans cet état
+  (la base actuelle est d'abord gardée dans `/data/avant-restauration.db`).
+
 ## Performances
 
 - Serveur Railway à Amsterdam (`eu-west`), à côté des serveurs de Telegram.

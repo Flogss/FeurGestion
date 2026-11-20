@@ -174,6 +174,32 @@ class Database:
         if self.conn:
             await self.conn.close()
 
+    async def stats(self) -> dict[str, int]:
+        """Combien de lignes dans les tables principales (pour vérifier que rien n'a disparu)."""
+        counts = {}
+        for table in ("users", "actions", "warns", "flocko", "quotes", "settings"):
+            async with self.conn.execute(f"SELECT COUNT(*) AS n FROM {table}") as cur:
+                counts[table] = (await cur.fetchone())["n"]
+        return counts
+
+    async def snapshot(self, target: str) -> None:
+        """Copie cohérente et compacte de la base, même pendant que le bot tourne."""
+        if os.path.exists(target):
+            os.remove(target)
+        await self.conn.execute("VACUUM INTO ?", (target,))
+
+    async def replace_with(self, source: str) -> None:
+        """Remplace toute la base par le fichier `source` (restauration d'une sauvegarde)."""
+        await self.close()
+        for suffix in ("-wal", "-shm"):
+            if os.path.exists(self.path + suffix):
+                os.remove(self.path + suffix)
+        os.replace(source, self.path)
+        self._settings.clear()
+        self._seen.clear()
+        self._filters = None
+        await self.connect()
+
     # --- Utilisateurs ---
 
     async def track_user(self, user: User, active: bool) -> tuple[str | None, str] | None:

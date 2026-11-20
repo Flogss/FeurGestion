@@ -25,6 +25,7 @@ ADMIN_ONLY = (
     "lock", "verrou", "unlock", "deverrou", "locks", "verrous",
     "purge", "del", "suppr", "pin", "epingle", "unpin", "desepingle", "feur",
     "mod", "modo", "promote", "unmod", "unmodo", "demod", "demote", "jeux", "delcitation", "uncite",
+    "backup", "sauvegarde", "restore", "restaurer",
 )
 
 ALL, STAFF, ADMIN = "all", "staff", "admin"
@@ -180,7 +181,9 @@ SECTIONS = {
         "/jeux — roulette et duels\n"
         "/motinterdit <i>on|off</i> — le mot interdit du jour (en privé, je te le révèle)\n"
         "/sangmata — annoncer les changements de pseudo dans le groupe\n"
-        "/warnlimit · /warnaction — la limite de warns",
+        "/warnlimit · /warnaction — la limite de warns\n"
+        "/backup — sauvegarde de la base en privé (une automatique chaque nuit à 4 h)\n"
+        "/restore — en privé, en réponse à un fichier de sauvegarde : remet la base comme avant",
     ),
 }
 MUSIC_HELP = SECTIONS["musique"][2]

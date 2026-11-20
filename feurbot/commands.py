@@ -85,6 +85,7 @@ ADMIN = [
     ("sangmata", "Annonces de changement de pseudo on/off"),
     ("warnlimit", "Nombre de warns avant sanction"),
     ("warnaction", "Sanction à la limite de warns"),
+    ("backup", "Sauvegarde de la base (en privé)"),
 ]
 
 

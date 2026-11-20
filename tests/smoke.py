@@ -1051,6 +1051,38 @@ async def main():
     await send(RANDOM, "/start musique", chat=RANDOM["id"])
     assert "@feurzizibot" in replies()[0] and "sans appuyer sur Entrée" in replies()[0]
 
+    # --- Sauvegardes ---
+    await send(RANDOM, "/backup")
+    assert not [c for c in session.calls if type(c).__name__ == "SendDocument"], "un membre a eu la base"
+    await send(ADMIN, "/backup")
+    upload = next(c for c in session.calls if type(c).__name__ == "SendDocument")
+    assert upload.chat_id == ADMIN["id"] and upload.document.data.startswith(b"SQLite format 3\x00")
+    assert "Envoyée en privé" in replies()[0]
+    saved = upload.document.data
+    quotes_before = await db.count_quotes()
+    await db.add_quote(RANDOM["id"], "Random", "phrase ajoutée après la sauvegarde", 1, 999999, ADMIN["id"])
+
+    async def fake_download(file, destination=None, **kwargs):
+        Path(destination).write_bytes(downloaded)
+
+    real_download = bot.download
+    object.__setattr__(bot, "download", fake_download)
+    try:
+        doc = {"file_id": "DOC", "file_unique_id": "d", "file_name": "feurbot-2026-11-20-04h00.db"}
+        backup_msg = {"message_id": 5000, "date": int(time.time()), "chat": {"id": ADMIN["id"], "type": "private"},
+                      "from": {"id": 9006812840, "is_bot": True, "first_name": "FeurBot"}, "document": doc}
+        downloaded = b"pas une base"
+        await send(ADMIN, "/restore", chat=ADMIN["id"], reply_to=backup_msg)
+        assert "pas une sauvegarde valide" in replies()[0]
+        downloaded = saved
+        await send(ADMIN, "/restore", chat=ADMIN["id"], reply_to=backup_msg)
+        assert "Base restaurée" in replies()[0]
+        assert await db.count_quotes() == quotes_before, "la restauration n'a pas remis la base d'avant"
+        assert os.path.exists(os.path.join(os.path.dirname(cfg.db_path), "avant-restauration.db"))
+        assert await db.is_mod(MOD["id"]) is False and (await db.get_setting("feur", True)) is not None
+    finally:
+        object.__setattr__(bot, "download", real_download)
+
     # Tout le HTML envoyé (aide comprise) doit être valide
     for _, _, text in help_module.SECTIONS.values():
         check_html(text)
