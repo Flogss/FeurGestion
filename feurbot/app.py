@@ -4,6 +4,7 @@ from .config import Config
 from .db import Database
 from .handlers import (
     afk,
+    antiflood,
     backup,
     events,
     flocko,
@@ -35,6 +36,7 @@ def build_dispatcher(cfg: Config, db: Database) -> Dispatcher:
         warns.router,
         notes.router,
         locks.router,
+        antiflood.router,
         tools.router,
         afk.router,
         fun.router,

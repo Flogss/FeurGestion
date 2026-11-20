@@ -61,7 +61,7 @@ from feurbot.app import build_dispatcher  # noqa: E402
 from feurbot.config import load_config  # noqa: E402
 from feurbot.db import Database  # noqa: E402
 from feurbot import commands, deezer  # noqa: E402
-from feurbot.handlers import fun, games, memory, passive, welcome  # noqa: E402
+from feurbot.handlers import antiflood, fun, games, memory, passive, welcome  # noqa: E402
 from feurbot.handlers import help as help_module  # noqa: E402
 from feurbot.jokes import EIGHTBALL, HACK_STEPS, JOKES, QUOI_ANSWERS, QUIPS, analyze, feur_reply  # noqa: E402
 from feurbot.utils import format_duration, parse_duration  # noqa: E402
@@ -220,6 +220,7 @@ async def main():
     bot = Bot("9006812840:TEST", session=session, default=DefaultBotProperties(parse_mode="HTML"))
     dp = build_dispatcher(cfg, db)
     await db.set_setting("motinterdit_on", False)
+    await db.set_setting("antiflood", "off")  # les tests envoient des rafales : on l'active seulement pour son test
     passive.EASTER_EGG_CHANCE = 0
     fun.HACK_DELAY = 0
     used = dp.resolve_used_update_types()
@@ -1082,6 +1083,80 @@ async def main():
         assert await db.is_mod(MOD["id"]) is False and (await db.get_setting("feur", True)) is not None
     finally:
         object.__setattr__(bot, "download", real_download)
+
+    # --- Anti-flood ---
+    await db.set_setting("antiflood", "normal")
+    for state in (antiflood._recent, antiflood._strikes, antiflood._muted_until):
+        state.clear()
+    flooder = {"id": 888888, "is_bot": False, "first_name": "Spammeur"}
+    session.users[flooder["id"]] = flooder
+
+    async def burst(user, texts, **extra):
+        calls = []
+        for text in texts:
+            await send(user, text, **extra)
+            calls += session.calls
+        return calls
+
+    def of(calls, kind):
+        return [c for c in calls if isinstance(c, kind)]
+
+    # Discussion rapide mais normale : rien
+    calls = await burst(flooder, [f"je parle vite {i}" for i in range(5)])
+    assert not of(calls, RestrictChatMember), "5 messages rapides ne sont pas du flood"
+    # Rafale : 8 messages en moins de 6 s
+    calls = await burst(flooder, ["encore", "et encore", "toujours plus"])
+    mute = of(calls, RestrictChatMember)
+    assert len(mute) == 1 and mute[0].user_id == flooder["id"] and abs(mute[0].until_date - (time.time() + 60)) < 5
+    assert len(of(calls, DeleteMessages)[0].message_ids) == 8, "les 8 messages du flood doivent partir"
+    notice = [c for c in of(calls, SendMessage) if c.chat_id == CHAT][-1]
+    assert "flood" in notice.text and notice.reply_markup.inline_keyboard[0][0].callback_data.startswith("undo:")
+    assert any(c.text.startswith("#FLOOD") for c in of(calls, SendMessage))
+    # Ce qui arrive encore pendant que le mute se met en place est effacé, sans deuxième sanction
+    calls = await burst(flooder, ["je continue"])
+    assert of(calls, DeleteMessage) and not of(calls, RestrictChatMember)
+    # L'équipe peut annuler
+    await click(ADMIN, notice.reply_markup.inline_keyboard[0][0].callback_data)
+    assert session.of(RestrictChatMember)[0].permissions.can_send_messages
+
+    # Copier-coller : 4 fois le même message
+    repeater = {"id": 888889, "is_bot": False, "first_name": "Copieur"}
+    session.users[repeater["id"]] = repeater
+    calls = await burst(repeater, ["ACHÈTE MES CRYPTOS", "achète  mes cryptos", "salut", "Achète mes cryptos"])
+    assert not of(calls, RestrictChatMember)
+    calls = await burst(repeater, ["achète mes cryptos"])
+    assert of(calls, RestrictChatMember), "le même message 4 fois doit déclencher"
+
+    # Récidive dans la journée : 10 min
+    antiflood._muted_until.clear()
+    calls = await burst(flooder, [f"spam {i}" for i in range(8)])
+    assert abs(of(calls, RestrictChatMember)[0].until_date - (time.time() + 600)) < 5
+
+    # Un album de 10 photos compte pour un seul message
+    photographer = {"id": 888890, "is_bot": False, "first_name": "Photographe"}
+    session.users[photographer["id"]] = photographer
+    calls = []
+    for i in range(10):
+        await send(photographer, None, media_group_id="album1",
+                   photo=[{"file_id": f"P{i}", "file_unique_id": f"p{i}", "width": 9, "height": 9}])
+        calls += session.calls
+    assert not of(calls, RestrictChatMember), "un album n'est pas du flood"
+
+    # Les admins ne sont jamais concernés
+    calls = await burst(GROUP_ADMIN, [f"annonce {i}" for i in range(12)])
+    assert not of(calls, RestrictChatMember)
+
+    # Réglages
+    await send(NOUSER, "/antiflood off")
+    assert await antiflood.get_mode(db) == "normal", "un membre a coupé l'anti-flood"
+    await send(ADMIN, "/antiflood strict")
+    assert await antiflood.get_mode(db) == "strict"
+    await send(ADMIN, "/antiflood")
+    assert "strict" in replies()[0] and "6 messages en 6 s" in replies()[0]
+    await send(ADMIN, "/antiflood off")
+    antiflood._recent.clear()
+    calls = await burst(flooder, [f"libre {i}" for i in range(12)])
+    assert not of(calls, RestrictChatMember), "anti-flood coupé : plus de mute"
 
     # Tout le HTML envoyé (aide comprise) doit être valide
     for _, _, text in help_module.SECTIONS.values():

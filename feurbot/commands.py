@@ -75,6 +75,7 @@ ADMIN = [
     ("lock", "Verrouiller (liens, médias…)"),
     ("unlock", "Déverrouiller"),
     ("locks", "État des verrous"),
+    ("antiflood", "Anti-flood : doux, normal, strict ou off"),
     ("save", "Créer une note"),
     ("clear", "Supprimer une note"),
     ("filter", "Créer une réponse automatique"),

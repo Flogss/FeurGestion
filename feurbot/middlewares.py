@@ -8,7 +8,7 @@ from aiogram.types import Message
 
 from .config import Config
 from .db import Database, full_name
-from .handlers import afk, locks
+from .handlers import afk, antiflood, locks
 from .targets import Target
 
 log = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class TrackerMiddleware(BaseMiddleware):
 
 
 class GuardMiddleware(BaseMiddleware):
-    """Avant tout le reste : verrous (liens, transferts) puis AFK."""
+    """Avant tout le reste : anti-flood, verrous (liens, transferts) puis AFK."""
 
     def __init__(self, db: Database, cfg: Config) -> None:
         self.db = db
@@ -75,9 +75,11 @@ class GuardMiddleware(BaseMiddleware):
         if event.chat.id == self.cfg.chat_id and event.from_user and not event.sender_chat:
             bot = data["bot"]
             try:
+                if await antiflood.check(event, bot, self.db, self.cfg):
+                    return None  # flood : message supprimé, on ne va pas plus loin
                 if await locks.enforce(event, bot, self.db, self.cfg):
                     return None  # message supprimé : on ne va pas plus loin
                 await afk.check(event, bot, self.db, self.cfg)
             except Exception:
-                log.exception("Échec des vérifications verrous / AFK")
+                log.exception("Échec des vérifications anti-flood / verrous / AFK")
         return await handler(event, data)

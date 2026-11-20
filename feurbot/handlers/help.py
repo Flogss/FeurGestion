@@ -25,7 +25,7 @@ ADMIN_ONLY = (
     "lock", "verrou", "unlock", "deverrou", "locks", "verrous",
     "purge", "del", "suppr", "pin", "epingle", "unpin", "desepingle", "feur",
     "mod", "modo", "promote", "unmod", "unmodo", "demod", "demote", "jeux", "delcitation", "uncite",
-    "backup", "sauvegarde", "restore", "restaurer",
+    "backup", "sauvegarde", "restore", "restaurer", "antiflood", "flood",
 )
 
 ALL, STAFF, ADMIN = "all", "staff", "admin"
@@ -160,7 +160,9 @@ SECTIONS = {
         "<code>liens</code> — je supprime les liens et pubs (PUB = MUTE, tout ça)\n"
         "<code>transferts</code> — je supprime les messages transférés\n"
         "<code>medias</code> · <code>stickers</code> · <code>sondages</code> · <code>apercus</code> — coupe ces droits\n"
-        "<code>tout</code> — groupe en lecture seule\n"
+        "<code>tout</code> — groupe en lecture seule\n\n"
+        "/antiflood <i>doux|normal|strict|off</i> — coupe les rafales (8 messages en 6 s en normal) "
+        "et les copier-coller ; mute 1 min, puis 10 min, puis 1 h\n"
         "<i>Admins et modos ne sont jamais bloqués par les suppressions.</i>",
     ),
     "modos": (

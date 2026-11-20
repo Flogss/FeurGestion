@@ -79,6 +79,18 @@ Variables utilisables (notes, filtres, règles, bienvenue) : `{mention}` `{name}
 - `medias`, `stickers`, `sondages`, `apercus` : coupe ces droits Telegram
 - `tout` : groupe en lecture seule
 
+### Anti-flood
+
+Actif par défaut en mode `normal`, réglé pour ne jamais gêner une vraie conversation :
+
+- **rafale** : 8 messages en 6 secondes (`doux` : 10, `strict` : 6) ;
+- **copier-coller** : le même message (ou sticker, ou photo) 4 fois en une minute (`doux` : 5, `strict` : 3) ;
+- un album photo ou des messages transférés ensemble comptent pour un seul ; admins et modos ne sont jamais concernés ;
+- sanction progressive sur 24 h : 1 min, puis 10 min, puis 1 h de mute. Les messages du flood sont effacés,
+  un bouton « ↩️ Annuler » permet à l'équipe de lever le mute, et un log `#FLOOD` part en privé.
+
+`/antiflood doux|normal|strict|off` (admins) pour régler ou couper.
+
 ### Infos et outils
 
 | Commande | Effet |
