@@ -56,7 +56,7 @@ async def complete(payload_messages: list[dict], max_tokens: int) -> str:
                 async with _session.post(
                     API,
                     headers={"Authorization": f"Bearer {key}"},
-                    json={"model": model, "messages": payload_messages, "max_tokens": max_tokens, "temperature": 0.8},
+                    json=_payload(model, payload_messages, max_tokens),
                 ) as response:
                     data = await response.json(content_type=None)
                 if response.status == 200 and data.get("choices"):
@@ -68,6 +68,14 @@ async def complete(payload_messages: list[dict], max_tokens: int) -> str:
                 last_error = str(exc)
             log.warning("IA %s indisponible : %s", model, last_error)
         raise AIError(last_error or "pas de réponse")
+
+
+def _payload(model: str, messages: list[dict], max_tokens: int) -> dict:
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.8}
+    if model.startswith("openai/gpt-oss"):
+        # Modèle qui « réfléchit » avant de répondre : réflexion courte, sinon elle mange toute la place
+        payload["reasoning_effort"] = "low"
+    return payload
 
 
 async def close() -> None:

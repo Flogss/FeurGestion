@@ -85,7 +85,7 @@ Variables utilisables (notes, filtres, règles, bienvenue) : `{mention}` `{name}
 - `/ia` en réponse à un message : l'IA réagit à ce message.
 - Répondre à un message de l'IA continue la conversation (10 derniers échanges gardés).
 - 8 s minimum entre deux questions par personne ; `/ia on|off` pour les admins.
-- Chaque soir à 23 h, résumé drôle de tout ce qui s'est dit depuis le précédent (pseudos, moments marquants,
+- Chaque soir à 23 h, résumé court et drôle depuis le précédent : 3 à 5 puces d'une ligne (pseudos, moments marquants),
   « moment du jour », « prix du jour »). `/resume` le publie tout de suite, `/resume on|off` (admins).
   Les messages gardés pour ça (texte seulement) sont effacés une fois résumés, et au plus tard après 3 jours.
 - Modèle `openai/gpt-oss-120b` via Groq (secours : `qwen/qwen3.8-27b`). Clé dans la variable `GROQ_API_KEY`.

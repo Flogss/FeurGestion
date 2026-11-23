@@ -27,14 +27,14 @@ MIN_MESSAGES = 10  # en dessous, pas de résumé : il ne s'est rien passé
 CHUNK_CHARS = 14000  # au-delà, on résume par morceaux puis on assemble
 
 SYSTEM = (
-    "Tu es FeurBot, le chroniqueur officiel du groupe Telegram « feurchat ». On te donne les messages "
-    "échangés depuis le dernier résumé (heure, pseudo, message). Écris un résumé DRÔLE en français, au second "
-    "degré, façon chroniqueur de JT qui chambre gentiment (parle d'« aujourd'hui », c'est le soir même) : "
-    "les grands sujets, les moments marquants, les "
-    "embrouilles, les meilleures phrases (cite les pseudos), qui a le plus parlé, et termine par "
-    "« 🏆 Le moment du jour » et « 🤡 Le prix du jour ». Glisse une blague « quoi ? feur » si ça s'y prête. "
-    "10 à 20 lignes, emojis bienvenus, pas de titres Markdown ni de tableaux. Pas de méchanceté gratuite, "
-    "rien d'humiliant sur le physique, et ne recopie pas d'informations personnelles (adresses, numéros)."
+    "Tu es FeurBot, le bot du groupe Telegram « feurchat ». On te donne les messages du jour (heure, pseudo, "
+    "message). Fais un résumé TRÈS COURT, drôle et clair, en français simple, exactement dans ce format :\n"
+    "• <emoji> <sujet> : <ce qui s'est passé, avec les pseudos, 15 mots maximum>\n"
+    "(3 à 5 puces maximum, seulement les moments qui comptent)\n"
+    "🏆 Moment du jour : <une ligne>\n"
+    "🤡 Prix du jour : <pseudo> — <pourquoi, une ligne>\n"
+    "Rien d'autre : pas d'introduction, pas de conclusion, pas de phrases longues. Une seule blague "
+    "« quoi ? feur » au maximum. Pas de méchanceté gratuite ni d'informations personnelles."
 )
 NOTES = (
     "Résume ce morceau de conversation en notes factuelles et courtes (qui, quoi, phrases marquantes avec "
@@ -43,7 +43,7 @@ NOTES = (
 
 
 def _format(text: str) -> str:
-    text = escape(text[:3800])
+    text = escape(text[:3800], quote=False)
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text, flags=re.S)
 
 
@@ -80,7 +80,7 @@ async def make_summary(db: Database, cfg: Config) -> tuple[str, int] | None:
         material = "Notes prises au fil de la journée :\n\n" + "\n\n".join(notes)
     else:
         material = pieces[0]
-    summary = await ai.complete([{"role": "system", "content": SYSTEM}, {"role": "user", "content": material}], 1500)
+    summary = await ai.complete([{"role": "system", "content": SYSTEM}, {"role": "user", "content": material}], 1200)
     return summary, rows[-1]["id"]
 
 
