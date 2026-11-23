@@ -88,6 +88,7 @@ ADMIN = [
     ("warnlimit", "Nombre de warns avant sanction"),
     ("warnaction", "Sanction à la limite de warns"),
     ("backup", "Sauvegarde de la base (en privé)"),
+    ("resume", "Publier le résumé de la journée"),
 ]
 
 

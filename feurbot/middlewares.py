@@ -16,6 +16,27 @@ log = logging.getLogger(__name__)
 Handler = Callable[[Message, dict[str, Any]], Awaitable[Any]]
 
 
+def _journal_line(message: Message) -> str | None:
+    """Ce qu'on garde d'un message pour le résumé du soir : le texte, ou une petite étiquette pour les médias."""
+    text = message.text or message.caption
+    if text and text[0] in "./!" and len(text) > 1 and text[1].isalpha():
+        return None  # les commandes ne racontent rien
+    if message.sticker:
+        label = f"[sticker {message.sticker.emoji or ''}]".replace(" ]", "]")
+    elif message.photo:
+        label = "[photo]"
+    elif message.animation:
+        label = "[GIF]"
+    elif message.video or message.video_note:
+        label = "[vidéo]"
+    elif message.voice:
+        label = "[vocal]"
+    else:
+        label = ""
+    content = " ".join(part for part in (label, text or "") if part).strip()
+    return content[:400] or None
+
+
 class TrackerMiddleware(BaseMiddleware):
     """Mémorise toutes les personnes vues dans le groupe (pseudo -> ID, activité, anciens noms)."""
 
@@ -35,6 +56,9 @@ class TrackerMiddleware(BaseMiddleware):
         if message.from_user and not message.sender_chat:
             is_service = bool(message.new_chat_members or message.left_chat_member)
             change = await self.db.track_user(message.from_user, active=not is_service)
+            line = _journal_line(message)
+            if line and not message.from_user.is_bot:
+                await self.db.add_chat_line(message.from_user.id, message.from_user.first_name, line)
             if change and await self.db.get_setting("sangmata", False):
                 await self._announce(message, change, bot)
 

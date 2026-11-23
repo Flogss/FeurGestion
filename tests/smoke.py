@@ -1203,6 +1203,33 @@ async def main():
     finally:
         ai.ask = real_ask
 
+    # --- Résumé du soir ---
+    lines = await db.chat_lines()
+    assert lines and not any(row["text"].startswith(("/", ".")) for row in lines), "les commandes ne vont pas au résumé"
+    await send(VICTIM, None, sticker={"file_id": "S", "file_unique_id": "s", "type": "regular", "width": 9,
+                                      "height": 9, "is_animated": False, "is_video": False, "emoji": "😂"})
+    assert (await db.chat_lines())[-1]["text"] == "[sticker 😂]"
+    sent_to_ai = []
+
+    async def fake_complete(messages, max_tokens):
+        sent_to_ai.append(messages)
+        return "Grosse journée : **Victime** a parlé de pâtes. 🏆 Le moment du jour : feur."
+
+    real_complete, ai.complete = ai.complete, fake_complete
+    try:
+        await send(RANDOM, "/resume")
+        assert not sent_to_ai, "un membre a lancé le résumé"
+        await send(ADMIN, "/resume")
+        summary = [c for c in session.of(SendMessage) if c.chat_id == CHAT][-1].text
+        assert summary.startswith("📰 <b>Le résumé du jour</b>") and "<b>Victime</b>" in summary
+        transcript = sent_to_ai[-1][-1]["content"]
+        assert "Victime: " in transcript and "pâtes" in transcript
+        assert not await db.chat_lines(), "les messages résumés doivent être effacés"
+        await send(ADMIN, "/resume")
+        assert "Rien à résumer" in replies()[0]
+    finally:
+        ai.complete = real_complete
+
     # Tout le HTML envoyé (aide comprise) doit être valide
     for _, _, text in help_module.SECTIONS.values():
         check_html(text)

@@ -25,7 +25,7 @@ ADMIN_ONLY = (
     "lock", "verrou", "unlock", "deverrou", "locks", "verrous",
     "purge", "del", "suppr", "pin", "epingle", "unpin", "desepingle", "feur",
     "mod", "modo", "promote", "unmod", "unmodo", "demod", "demote", "jeux", "delcitation", "uncite",
-    "backup", "sauvegarde", "restore", "restaurer", "antiflood", "flood",
+    "backup", "sauvegarde", "restore", "restaurer", "antiflood", "flood", "resume", "résumé", "recap",
 )
 
 ALL, STAFF, ADMIN = "all", "staff", "admin"
@@ -77,6 +77,8 @@ SECTIONS = {
         "/ia <i>question</i> — pose n'importe quelle question à FeurBot\n"
         "/ia en réponse à un message — l'IA réagit à ce message\n"
         "Réponds à un message de l'IA pour continuer la conversation.\n"
+        "📰 Chaque soir à 23 h : le résumé drôle de la journée.\n"
+        "👑 <i>/resume</i> — le publier tout de suite · <i>/resume on|off</i>\n"
         "👑 <i>/ia on|off</i> — activer / couper",
     ),
     "musique": (

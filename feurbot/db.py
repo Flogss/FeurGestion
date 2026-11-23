@@ -117,6 +117,15 @@ CREATE TABLE IF NOT EXISTS deezer_audio (
     file_id  TEXT NOT NULL
 );
 
+-- Messages du groupe en attente du prochain résumé (effacés une fois résumés)
+CREATE TABLE IF NOT EXISTS chat_log (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name    TEXT NOT NULL,
+    text    TEXT NOT NULL,
+    at      INTEGER NOT NULL
+);
+
 -- Modérateurs nommés avec .mod : ils peuvent sanctionner, pas configurer le bot
 CREATE TABLE IF NOT EXISTS mods (
     user_id  INTEGER PRIMARY KEY,
@@ -717,5 +726,25 @@ class Database:
     async def set_deezer_audio(self, track_id: int, file_id: str) -> None:
         await self.conn.execute(
             "INSERT OR REPLACE INTO deezer_audio(track_id, file_id) VALUES (?, ?)", (track_id, file_id)
+        )
+        await self.conn.commit()
+
+    # --- Journal du jour (pour le résumé) ---
+
+    async def add_chat_line(self, user_id: int, name: str, text: str) -> None:
+        await self.conn.execute(
+            "INSERT INTO chat_log(user_id, name, text, at) VALUES (?, ?, ?, ?)",
+            (user_id, name, text, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def chat_lines(self) -> list[aiosqlite.Row]:
+        async with self.conn.execute("SELECT * FROM chat_log ORDER BY id") as cur:
+            return list(await cur.fetchall())
+
+    async def forget_chat_lines(self, up_to_id: int) -> None:
+        """Efface les messages résumés (et tout ce qui a plus de 3 jours, au cas où)."""
+        await self.conn.execute(
+            "DELETE FROM chat_log WHERE id <= ? OR at < ?", (up_to_id, int(time.time()) - 3 * 86400)
         )
         await self.conn.commit()

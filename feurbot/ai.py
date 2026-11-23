@@ -36,16 +36,19 @@ def enabled() -> bool:
 
 async def ask(messages: list[dict], name: str) -> str:
     """`messages` : l'historique [{"role": "user"|"assistant", "content": ...}]. Retourne la réponse."""
+    return await complete([{"role": "system", "content": SYSTEM.format(name=name)}, *messages], 700)
+
+
+async def complete(payload_messages: list[dict], max_tokens: int) -> str:
     global _session
     key = os.getenv("GROQ_API_KEY")
     if not key:
         raise AIError("pas de clé")
     if _session is None or _session.closed:
         _session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30),
+            timeout=aiohttp.ClientTimeout(total=90),
             connector=aiohttp.TCPConnector(ssl=ssl.create_default_context(cafile=certifi.where())),
         )
-    payload_messages = [{"role": "system", "content": SYSTEM.format(name=name)}, *messages]
     async with _slots:
         last_error = None
         for model in MODELS:
@@ -53,7 +56,7 @@ async def ask(messages: list[dict], name: str) -> str:
                 async with _session.post(
                     API,
                     headers={"Authorization": f"Bearer {key}"},
-                    json={"model": model, "messages": payload_messages, "max_tokens": 700, "temperature": 0.8},
+                    json={"model": model, "messages": payload_messages, "max_tokens": max_tokens, "temperature": 0.8},
                 ) as response:
                     data = await response.json(content_type=None)
                 if response.status == 200 and data.get("choices"):

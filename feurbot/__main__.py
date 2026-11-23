@@ -12,7 +12,7 @@ from .app import build_dispatcher
 from .commands import sync_commands
 from .config import Config, load_config
 from .db import Database
-from .handlers import backup, events, memory
+from .handlers import backup, events, memory, resume
 
 log = logging.getLogger("feurbot")
 
@@ -27,7 +27,8 @@ async def on_startup(bot: Bot, cfg: Config, db: Database) -> None:
     log.info("Base %s : %s", db.path, ", ".join(f"{count} {table}" for table, count in stats.items()))
     await events.check_bot_rights(bot, cfg)
     await sync_commands(bot, cfg, db)
-    for loop in (memory.birthday_loop(bot, db, cfg), backup.backup_loop(bot, db, cfg)):
+    loops = (memory.birthday_loop(bot, db, cfg), backup.backup_loop(bot, db, cfg), resume.summary_loop(bot, db, cfg))
+    for loop in loops:
         task = asyncio.create_task(loop)
         _background.add(task)
         task.add_done_callback(_background.discard)
