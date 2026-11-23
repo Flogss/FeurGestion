@@ -15,6 +15,7 @@ from ..jokes import EASTER_EGGS, FEUR_TITLES, analyze
 from ..targets import Target
 from ..utils import on_cooldown
 from .games import check_forbidden_word
+from .ia import continue_thread, is_ai_reply
 from .notes import find_filter, send_snippet
 from .tools import report
 
@@ -36,6 +37,10 @@ async def on_message(message: Message, bot: Bot, db: Database, cfg: Config) -> N
         return
 
     if await check_forbidden_word(message, bot, db, cfg):
+        return
+
+    if is_ai_reply(message, bot):
+        await continue_thread(message, bot, db)
         return
 
     tag = NOTE_TAG.match(text)

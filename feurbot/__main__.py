@@ -7,7 +7,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
-from . import deezer
+from . import ai, deezer
 from .app import build_dispatcher
 from .commands import sync_commands
 from .config import Config, load_config
@@ -37,6 +37,7 @@ async def on_shutdown() -> None:
     for task in _background:
         task.cancel()
     await deezer.close()
+    await ai.close()
 
 
 async def main() -> None:

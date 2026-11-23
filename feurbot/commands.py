@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 PUBLIC = [
     ("help", "Le menu d'aide (avec des boutons, la classe)"),
+    ("ia", "Poser une question à l'IA"),
     ("flocko", "Ton taux de flocko, nouveau toutes les 12 h"),
     ("topflocko", "Le classement flocko en image"),
     ("roulette", "1 chance sur 6 d'être mute 1 minute"),

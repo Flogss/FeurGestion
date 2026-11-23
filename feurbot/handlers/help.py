@@ -70,6 +70,15 @@ SECTIONS = {
         "/anniv <i>JJ/MM</i> — je te le souhaite à minuit, devant tout le monde\n"
         "/anniversaires — les prochains à fêter",
     ),
+    "ia": (
+        "🤖 IA",
+        ALL,
+        "<b>🤖 IA</b>\n"
+        "/ia <i>question</i> — pose n'importe quelle question à FeurBot\n"
+        "/ia en réponse à un message — l'IA réagit à ce message\n"
+        "Réponds à un message de l'IA pour continuer la conversation.\n"
+        "👑 <i>/ia on|off</i> — activer / couper",
+    ),
     "musique": (
         "🎵 Musique",
         ALL,

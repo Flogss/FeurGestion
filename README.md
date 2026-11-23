@@ -79,6 +79,14 @@ Variables utilisables (notes, filtres, règles, bienvenue) : `{mention}` `{name}
 - `medias`, `stickers`, `sondages`, `apercus` : coupe ces droits Telegram
 - `tout` : groupe en lecture seule
 
+### IA
+
+- `/ia question` : FeurBot répond (français, second degré, réponses courtes).
+- `/ia` en réponse à un message : l'IA réagit à ce message.
+- Répondre à un message de l'IA continue la conversation (10 derniers échanges gardés).
+- 8 s minimum entre deux questions par personne ; `/ia on|off` pour les admins.
+- Modèle `openai/gpt-oss-120b` via Groq (secours : `qwen/qwen3.8-27b`). Clé dans la variable `GROQ_API_KEY`.
+
 ### Anti-flood
 
 Actif par défaut en mode `normal`, réglé pour ne jamais gêner une vraie conversation :

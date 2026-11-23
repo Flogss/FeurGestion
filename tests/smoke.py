@@ -60,7 +60,7 @@ from feurbot import utils  # noqa: E402
 from feurbot.app import build_dispatcher  # noqa: E402
 from feurbot.config import load_config  # noqa: E402
 from feurbot.db import Database  # noqa: E402
-from feurbot import commands, deezer  # noqa: E402
+from feurbot import ai, commands, deezer  # noqa: E402
 from feurbot.handlers import antiflood, fun, games, memory, passive, welcome  # noqa: E402
 from feurbot.handlers import help as help_module  # noqa: E402
 from feurbot.jokes import EIGHTBALL, HACK_STEPS, JOKES, QUOI_ANSWERS, QUIPS, analyze, feur_reply  # noqa: E402
@@ -155,7 +155,7 @@ class FakeSession(BaseSession):
         if isinstance(method, SetChatPermissions):
             self.permissions = method.permissions.model_dump(exclude_none=True)
             return True
-        if type(method).__name__ in ("SetMessageReaction", "SetMyCommands", "DeleteMyCommands", "AnswerInlineQuery"):
+        if type(method).__name__ in ("SetMessageReaction", "SetMyCommands", "DeleteMyCommands", "AnswerInlineQuery", "SendChatAction"):
             return True
         if type(method).__name__ == "GetUserProfilePhotos":
             return UserProfilePhotos(total_count=0, photos=[])
@@ -634,7 +634,7 @@ async def main():
     assert session.of(AnswerCallbackQuery)[0].show_alert and not session.of(EditMessageText), "rubrique staff visible"
     await send(RANDOM, "/aide")
     member_menu = session.of(SendMessage)[0]
-    assert "membre" in member_menu.text and len(sum(member_menu.reply_markup.inline_keyboard, [])) == 5
+    assert "membre" in member_menu.text and len(sum(member_menu.reply_markup.inline_keyboard, [])) == 6
     await send(RANDOM, "/help duel")
     assert "/duel" in replies()[0] and "Aide pour /duel" in replies()[0]
     await send(RANDOM, "/help ban")
@@ -699,7 +699,7 @@ async def main():
     # Aide, équipe et fiche
     await send(MOD, ".help")
     menu = session.of(SendMessage)[0]
-    assert "modo" in menu.text and len(sum(menu.reply_markup.inline_keyboard, [])) == 8
+    assert "modo" in menu.text and len(sum(menu.reply_markup.inline_keyboard, [])) == 9
     await send(VICTIM, ".mods")
     assert "Sans Pseudo" in replies()[0] and "Admins" in replies()[0]
     await send(ADMIN, ".info 555555")
@@ -1157,6 +1157,51 @@ async def main():
     antiflood._recent.clear()
     calls = await burst(flooder, [f"libre {i}" for i in range(12)])
     assert not of(calls, RestrictChatMember), "anti-flood coupé : plus de mute"
+
+    # --- IA ---
+    os.environ["GROQ_API_KEY"] = "test"
+    asked = []
+
+    async def fake_ask(messages, name):
+        asked.append(messages)
+        if "panne" in messages[-1]["content"]:
+            raise ai.AIError("down")
+        return f"Réponse **n°{len(asked)}** pour {name} <script>"
+
+    real_ask, ai.ask = ai.ask, fake_ask
+    try:
+        utils._cooldowns.clear()
+        await send(RANDOM, "/ia c'est quoi la capitale de l'Australie ?")
+        answer = replies()[0]
+        assert "<b>n°1</b>" in answer and "&lt;script&gt;" in answer, answer
+        assert asked[-1] == [{"role": "user", "content": "c'est quoi la capitale de l'Australie ?"}]
+        # Répondre au message de l'IA continue la conversation (avec l'historique)
+        ai_msg = {"message_id": 99, "date": int(time.time()), "text": "Réponse",
+                  "chat": {"id": CHAT, "type": "supergroup", "title": "feurchat"},
+                  "from": {"id": 9006812840, "is_bot": True, "first_name": "FeurBot"}}
+        utils._cooldowns.clear()
+        await send(RANDOM, "et la France ?", reply_to=ai_msg)
+        assert len(asked[-1]) == 3 and asked[-1][-1]["content"] == "et la France ?"
+        # /ia en réponse à un message : l'IA réagit à ce message
+        target = await send(VICTIM, "les pâtes c'est surcoté")
+        utils._cooldowns.clear()
+        await send(NOUSER, "/ia", reply_to=target)
+        assert "les pâtes c'est surcoté" in asked[-1][0]["content"]
+        # Anti-spam, panne, et coupure par un admin
+        await send(NOUSER, "/ia encore")
+        assert not replies(), "cooldown IA"
+        utils._cooldowns.clear()
+        await send(NOUSER, "/ia panne")
+        assert "sieste" in replies()[0]
+        await send(NOUSER, "/ia off")
+        assert await db.get_setting("ia", True), "un membre a coupé l'IA"
+        await send(ADMIN, "/ia off")
+        utils._cooldowns.clear()
+        await send(NOUSER, "/ia salut")
+        assert "désactivée" in replies()[0]
+        await send(ADMIN, "/ia on")
+    finally:
+        ai.ask = real_ask
 
     # Tout le HTML envoyé (aide comprise) doit être valide
     for _, _, text in help_module.SECTIONS.values():
